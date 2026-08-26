@@ -16,6 +16,8 @@ const C = {
 };
 
 const css = `
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: hidden; }
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 .ff-d { font-family: 'Barlow Condensed', sans-serif; }
 .ff-b { font-family: 'Space Grotesk', system-ui, sans-serif; }
@@ -762,13 +764,11 @@ export default function Forge() {
             <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <HartMark size={64} />
             </div>
-            <img src="/brand/hartwork_text_logo.png" alt="Hartwork" style={{ height: 52, width: "auto", display: "block", margin: "0 auto" }} />
-            <div style={{ color: C.muted, fontSize: 14, marginTop: 10 }}>Your coach. Your data. One plan.</div>
+            <img src="/brand/hartwork_text_logo.png" alt="Hartwork" style={{ width: "min(100%, 406px)", height: "auto", display: "block", margin: "0 auto" }} />
           </div>
           <input aria-label="Email" placeholder="Email" defaultValue="alex@email.com" style={inp} />
           <input aria-label="Password" placeholder="Password" type="password" defaultValue="••••••••" style={inp} />
           <button onClick={() => setScreen("app")} style={{ ...btnP, width: "100%", marginTop: 6 }}>Sign in</button>
-          <div style={{ color: C.muted, fontSize: 12, marginTop: 22, textAlign: "center" }}>Members are invited by their coach · Ironworks Gym</div>
         </div>
       </div>
     );
@@ -818,7 +818,7 @@ export default function Forge() {
                       onKeyDown={(e) => { if (e.key === "Enter") openReadiness(); }}
                       style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center", width: "100%", textAlign: "left" }}>
                       <Ring score={82} />
-                      <div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ color: C.text, fontSize: 15, fontWeight: 600 }}>Ready to push</div>
                         <div style={{ color: C.body, fontSize: 12.5, marginTop: 5, lineHeight: 1.55 }}>
                           7h 40m sleep · resting HR 54 · HRV up 6%. Synced from Whoop &amp; Apple Watch.
