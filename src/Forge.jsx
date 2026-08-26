@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
-  ChevronDown, Award, Watch, Activity, Flame, Play, Check, Moon,
+  ChevronDown, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
   Plus, Minus, Timer, X, PartyPopper, Gauge
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
@@ -367,7 +367,8 @@ export default function Forge() {
   const [talking, setTalking] = useState(false);
   const [exDetail, setExDetail] = useState(null);    // exercise name or null
   const [exTab, setExTab] = useState("history");
-  const [maxes, setMaxes] = useState({});            // name -> working max lb
+  const [maxes, setMaxes] = useState({});
+  const [removed, setRemoved] = useState({});   // {`${iso}:${letter}`: true} — deleted log rows            // name -> working max lb
   const [devs, setDevs] = useState([
     { name: "Apple Watch", detail: "Heart rate · Workouts", on: true, icon: Watch },
     { name: "Whoop 5.0", detail: "Recovery · Strain · Sleep", on: true, icon: Activity },
@@ -584,7 +585,11 @@ export default function Forge() {
                   </>
                 )}
 
-                {!isToday && entry?.status === "done" && (
+                {!isToday && entry?.status === "done" && (() => {
+                  const blocks = entry.blocks.filter((b) => !removed[`${selDay}:${b.letter}`]);
+                  const vSets = blocks.reduce((n, b) => n + b.sets.length, 0);
+                  const vVolume = blocks.reduce((n, b) => n + b.sets.reduce((m, x) => m + x.reps * x.w, 0), 0);
+                  return (
                   <>
                     <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>{entry.name}</h1>
 
@@ -595,28 +600,34 @@ export default function Forge() {
                         <Pill tone="recovery">Completed</Pill>
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
-                        <IconStat Icon={Check} n={`${entry.blocks.length}/${entry.blocks.length}`} t="Blocks" />
+                        <IconStat Icon={Check} n={`${blocks.length}/${entry.blocks.length}`} t="Blocks" />
                         <IconStat Icon={Activity} n={entry.readiness} t="Readiness" />
                         <IconStat Icon={Timer} n={entry.minutes} t="Minutes" />
                         <IconStat Icon={Gauge} n={`${entry.intensity}/10`} t="Intensity" />
-                        <IconStat Icon={Dumbbell} n={entry.volume.toLocaleString()} t="LB" />
+                        <IconStat Icon={Dumbbell} n={vVolume.toLocaleString()} t="LB" />
                       </div>
-                      {entry.blocks.map((b) => {
+                      {blocks.map((b) => {
                         const reps = b.sets.map((s) => s.reps).join(", ");
                         const bw = b.sets[0].w === 0;
                         const weights = b.sets.map((s) => s.w).join(", ");
                         return (
-                          <button key={b.letter} onClick={() => openExercise(b.name)}
-                            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", display: "flex", gap: 12, alignItems: "flex-start", marginTop: 14 }}>
-                            <Badge letter={b.letter} />
-                            <div style={{ flex: 1 }}>
-                              <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{b.name}</div>
-                              <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>
-                                {bw ? `${reps} reps · bodyweight` : `${reps} @ ${weights} lb`}
+                          <div key={b.letter} style={{ display: "flex", gap: 12, alignItems: "flex-start", marginTop: 14 }}>
+                            <button onClick={() => openExercise(b.name)}
+                              style={{ flex: 1, background: "none", border: "none", padding: 0, textAlign: "left", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                              <Badge letter={b.letter} />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{b.name}</div>
+                                <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>
+                                  {bw ? `${reps} reps · bodyweight` : `${reps} @ ${weights} lb`}
+                                </div>
                               </div>
-                            </div>
-                            <ChevronDown size={16} color={C.muted} style={{ transform: "rotate(-90deg)", flexShrink: 0, marginTop: 4 }} />
-                          </button>
+                              <ChevronDown size={16} color={C.muted} style={{ transform: "rotate(-90deg)", flexShrink: 0, marginTop: 4 }} />
+                            </button>
+                            <button aria-label={`Delete ${b.name} from log`} onClick={() => setRemoved({ ...removed, [`${selDay}:${b.letter}`]: true })}
+                              style={{ background: "none", border: "none", padding: "2px 2px 6px 6px", color: C.muted, flexShrink: 0, display: "flex" }}>
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         );
                       })}
                       <div style={{ color: C.muted, fontSize: 11.5, marginTop: 14 }}>Logged · synced to Coach Mike</div>
@@ -626,7 +637,8 @@ export default function Forge() {
                       Comment on Session
                     </button>
                   </>
-                )}
+                  );
+                })()}
 
                 {!isToday && entry?.status === "planned" && (
                   <>
