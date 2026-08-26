@@ -13,6 +13,11 @@
   to = "/.netlify/functions/tts"
   status = 200
 
+[[redirects]]
+  from = "/api/food"
+  to = "/.netlify/functions/food"
+  status = 200
+
 # SPA fallback — everything renders from index.html
 [[redirects]]
   from = "/*"

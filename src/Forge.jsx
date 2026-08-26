@@ -341,18 +341,18 @@ const IconStat = ({ Icon, n, t }) => (
   </div>
 );
 
-function Ring({ score }) {
+function Ring({ score, label = "Readiness" }) {
   const r = 52, circ = 2 * Math.PI * r;
   return (
     <div style={{ position: "relative", width: 126, height: 126, flexShrink: 0 }}>
-      <svg width="126" height="126" viewBox="0 0 128 128" role="img" aria-label={`Readiness ${score} of 100`}>
+      <svg width="126" height="126" viewBox="0 0 128 128" role="img" aria-label={`${label} ${score} of 100`}>
         <circle cx="64" cy="64" r={r} fill="none" stroke={C.line} strokeWidth="9" />
         <circle cx="64" cy="64" r={r} fill="none" stroke={C.recovery} strokeWidth="9" strokeLinecap="round"
           strokeDasharray={circ} strokeDashoffset={circ * (1 - score / 100)} transform="rotate(-90 64 64)" />
       </svg>
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
         <div className="ff-d" style={{ fontSize: 40, fontWeight: 800, color: C.text, lineHeight: 1 }}>{score}</div>
-        <div className="ff-b" style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: ".12em", marginTop: 2 }}>Readiness</div>
+        <div className="ff-b" style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: ".12em", marginTop: 2 }}>{label}</div>
       </div>
     </div>
   );
@@ -448,6 +448,25 @@ const stepBtn = {
   color: C.text, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
 };
 
+// ---- Fuel ----
+const FUEL_QUICK = [
+  { name: "Protein shake", kcal: 160, protein: 30, carbs: 5, fat: 3 },
+  { name: "Chicken & rice", kcal: 520, protein: 45, carbs: 55, fat: 12 },
+  { name: "Greek yogurt", kcal: 150, protein: 15, carbs: 9, fat: 4 },
+];
+function loadFuelLog() {
+  try { return JSON.parse(localStorage.getItem("forge.fuelLog")) || {}; } catch (e) { return {}; }
+}
+function saveFuelLog(log) { localStorage.setItem("forge.fuelLog", JSON.stringify(log)); }
+const DEFAULT_FUEL_TARGETS = { kcal: 2400, protein: 160 };
+function loadFuelTargets() {
+  try {
+    const v = JSON.parse(localStorage.getItem("forge.fuelTargets"));
+    return v && typeof v === "object" ? { ...DEFAULT_FUEL_TARGETS, ...v } : { ...DEFAULT_FUEL_TARGETS };
+  } catch (e) { return { ...DEFAULT_FUEL_TARGETS }; }
+}
+function saveFuelTargets(t) { localStorage.setItem("forge.fuelTargets", JSON.stringify(t)); }
+
 // ---- App ----
 export default function Forge() {
   const [screen, setScreen] = useState("login");
@@ -491,6 +510,23 @@ export default function Forge() {
     { name: "Oura Ring", detail: "Sleep · HRV", on: false, icon: Moon },
     { name: "Fitbit", detail: "Steps · Heart rate", on: false, icon: Activity },
   ]);
+  const [fuelLog, setFuelLog] = useState(loadFuelLog);
+  const [fuelTargets, setFuelTargets] = useState(loadFuelTargets);
+  const [foodQ, setFoodQ] = useState("");
+  const [foodResults, setFoodResults] = useState(null);
+  const [foodBusy, setFoodBusy] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
+  const [bodyweight, setBodyweight] = useState(() => {
+    const v = parseInt(localStorage.getItem("forge.bodyweight"), 10);
+    return Number.isFinite(v) ? v : 180;
+  });
+  const [fuelGoal, setFuelGoal] = useState("maintain"); // cut | maintain | build
+  const fuelIdRef = useRef(null);
+  if (fuelIdRef.current === null) {
+    const allFuel = Object.values(fuelLog).flat();
+    fuelIdRef.current = allFuel.reduce((m, e) => Math.max(m, e.id || 0), 0) + 1;
+  }
   const idx = useRef(0);
   const startedAt = useRef(null);
 
@@ -565,6 +601,79 @@ export default function Forge() {
     setComments([...comments, { text: draft.trim(), ref: commentRef, time: "Just now" }]);
     setDraft("");
     setCommentRef(null);
+  };
+
+  const addFuel = (entry) => {
+    const day = iso(TODAY);
+    const item = {
+      id: fuelIdRef.current++, name: entry.name, brand: entry.brand,
+      kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0,
+    };
+    setFuelLog((cur) => {
+      const prevRows = cur[day] ?? [];
+      const dayLog = [...prevRows, item];
+      const next = { ...cur, [day]: dayLog };
+      saveFuelLog(next);
+
+      const prevProtein = prevRows.reduce((s, e) => s + (e.protein || 0), 0);
+      const newProtein = dayLog.reduce((s, e) => s + (e.protein || 0), 0);
+      if (prevProtein < fuelTargets.protein && newProtein >= fuelTargets.protein) {
+        if (localStorage.getItem("forge.proteinSpokeDay") !== day) {
+          localStorage.setItem("forge.proteinSpokeDay", day);
+          speak(`Protein target hit — ${fuelTargets.protein} grams down. That's how you build.`);
+        }
+      }
+      return next;
+    });
+  };
+  const deleteFuel = (id) => {
+    const day = iso(TODAY);
+    setFuelLog((cur) => {
+      const next = { ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) };
+      saveFuelLog(next);
+      return next;
+    });
+  };
+  const searchFood = async () => {
+    const q = foodQ.trim();
+    if (q.length < 2) return;
+    setFoodBusy(true);
+    try {
+      const res = await fetch("/api/food?q=" + encodeURIComponent(q));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const json = await res.json();
+      setFoodResults(Array.isArray(json.results) ? json.results : []);
+    } catch (e) {
+      setFoodResults([]);
+    } finally {
+      setFoodBusy(false);
+    }
+  };
+  const addManual = () => {
+    if (!manual.name.trim()) return;
+    addFuel({
+      name: manual.name.trim(),
+      kcal: Number(manual.kcal) || 0,
+      protein: Number(manual.protein) || 0,
+      carbs: Number(manual.carbs) || 0,
+      fat: Number(manual.fat) || 0,
+    });
+    setManual({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
+    setManualOpen(false);
+  };
+  const changeBodyweight = (v) => {
+    setBodyweight(v);
+    localStorage.setItem("forge.bodyweight", String(v));
+  };
+  const calcTargets = () => {
+    const kcalMult = { cut: 12, maintain: 14, build: 16 }[fuelGoal];
+    const proteinMult = { cut: 1.0, maintain: 0.9, build: 0.85 }[fuelGoal];
+    const next = {
+      kcal: Math.round((bodyweight * kcalMult) / 10) * 10,
+      protein: Math.round(Math.round(bodyweight * proteinMult) / 5) * 5,
+    };
+    setFuelTargets(next);
+    saveFuelTargets(next);
   };
 
   const start = () => {
@@ -1087,6 +1196,156 @@ export default function Forge() {
             );
           })()}
 
+          {/* FUEL */}
+          {tab === "fuel" && (() => {
+            const fuelToday = fuelLog[iso(TODAY)] ?? [];
+            const totals = fuelToday.reduce((t, e) => ({
+              kcal: t.kcal + (e.kcal || 0), protein: t.protein + (e.protein || 0),
+              carbs: t.carbs + (e.carbs || 0), fat: t.fat + (e.fat || 0),
+            }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+            const proteinPct = Math.min(100, Math.round((totals.protein / fuelTargets.protein) * 100));
+            const kcalLeft = Math.round(fuelTargets.kcal - totals.kcal);
+            return (
+              <div>
+                <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>Fuel</h1>
+                <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 0" }}>{fmtLong(TODAY)}</div>
+
+                <Card style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center" }}>
+                  <Ring score={proteinPct} label="Protein" />
+                  <div>
+                    <div style={{ color: kcalLeft < 0 ? C.energy : C.text, fontSize: 15, fontWeight: 600 }}>
+                      {kcalLeft < 0 ? `Over by ${Math.abs(kcalLeft)}` : `${kcalLeft} kcal left`}
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>
+                      {Math.round(totals.kcal)} of {fuelTargets.kcal} kcal · {Math.round(totals.protein)} of {fuelTargets.protein} g protein
+                    </div>
+                  </div>
+                </Card>
+                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                  <MiniStat n={Math.round(totals.kcal)} t="Kcal" />
+                  <MiniStat n={Math.round(totals.protein)} t="Protein g" />
+                  <MiniStat n={Math.round(totals.carbs)} t="Carbs g" />
+                  <MiniStat n={Math.round(totals.fat)} t="Fat g" />
+                </div>
+
+                <Label>Quick add</Label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {FUEL_QUICK.map((f) => (
+                    <button key={f.name} onClick={() => addFuel(f)}
+                      style={{ ...btnG, padding: "9px 14px", minHeight: 38, fontSize: 12.5 }}>
+                      + {f.name}
+                    </button>
+                  ))}
+                </div>
+
+                <Label>Add food</Label>
+                <Card>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input aria-label="Search foods" placeholder="Search foods…" value={foodQ}
+                      onChange={(e) => setFoodQ(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") searchFood(); }}
+                      style={{ ...inp, flex: 1, marginBottom: 0 }} />
+                    <button onClick={searchFood} disabled={foodBusy || foodQ.trim().length < 2}
+                      style={{ ...btnP, padding: "0 18px", minHeight: 44, flexShrink: 0, opacity: (foodBusy || foodQ.trim().length < 2) ? .45 : 1 }}>
+                      Search
+                    </button>
+                  </div>
+                  {foodResults !== null && (
+                    foodResults.length ? (
+                      <div style={{ marginTop: 12 }}>
+                        {foodResults.map((r, i) => (
+                          <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 0", borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>
+                                {r.name}{r.brand && <span style={{ color: C.muted, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>{r.brand}</span>}
+                              </div>
+                              <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>
+                                {r.kcal} kcal · {r.protein}g P · {r.carbs}g C · {r.fat}g F · per {r.unit}
+                              </div>
+                            </div>
+                            <button aria-label={`Add ${r.name}`} onClick={() => addFuel(r)}
+                              style={{ width: 36, height: 36, borderRadius: 11, border: `1px solid ${C.lineStrong}`, background: "none", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                              <Plus size={16} color={C.body} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ color: C.muted, fontSize: 12.5, marginTop: 12 }}>Nothing found — try a simpler term, or add it manually below.</div>
+                    )
+                  )}
+                </Card>
+
+                <button onClick={() => setManualOpen(!manualOpen)} aria-expanded={manualOpen}
+                  style={{ background: "none", border: "none", color: C.recovery, fontSize: 13, fontWeight: 600, marginTop: 12, padding: "8px 0" }}>
+                  Add manually
+                </button>
+                {manualOpen && (
+                  <Card style={{ marginTop: 4 }}>
+                    <input aria-label="Name" placeholder="Name" value={manual.name}
+                      onChange={(e) => setManual({ ...manual, name: e.target.value })} style={inp} />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <input aria-label="Kcal" placeholder="Kcal" type="number" inputMode="numeric" value={manual.kcal}
+                        onChange={(e) => setManual({ ...manual, kcal: e.target.value })} style={{ ...inp, marginBottom: 0 }} />
+                      <input aria-label="Protein grams" placeholder="Protein" type="number" inputMode="numeric" value={manual.protein}
+                        onChange={(e) => setManual({ ...manual, protein: e.target.value })} style={{ ...inp, marginBottom: 0 }} />
+                      <input aria-label="Carbs" placeholder="Carbs" type="number" inputMode="numeric" value={manual.carbs}
+                        onChange={(e) => setManual({ ...manual, carbs: e.target.value })} style={{ ...inp, marginBottom: 0 }} />
+                      <input aria-label="Fat" placeholder="Fat" type="number" inputMode="numeric" value={manual.fat}
+                        onChange={(e) => setManual({ ...manual, fat: e.target.value })} style={{ ...inp, marginBottom: 0 }} />
+                    </div>
+                    <button onClick={addManual} disabled={!manual.name.trim()}
+                      style={{ ...btnP, width: "100%", marginTop: 12, opacity: manual.name.trim() ? 1 : .45 }}>
+                      Add to log
+                    </button>
+                  </Card>
+                )}
+
+                <Label>Logged today</Label>
+                <Card style={{ padding: 0 }}>
+                  {fuelToday.length ? fuelToday.map((e, i) => (
+                    <div key={e.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "14px 16px", borderBottom: i < fuelToday.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>
+                          {e.name}{e.brand && <span style={{ color: C.muted, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>{e.brand}</span>}
+                        </div>
+                        <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>
+                          {e.kcal} kcal · {e.protein}g P · {e.carbs}g C · {e.fat}g F
+                        </div>
+                      </div>
+                      <button aria-label={`Delete ${e.name}`} onClick={() => deleteFuel(e.id)}
+                        style={{ background: "none", border: "none", color: C.muted, flexShrink: 0, display: "flex", padding: 4 }}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  )) : (
+                    <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>Nothing logged yet.</div>
+                  )}
+                </Card>
+
+                <Label>Targets</Label>
+                <Card>
+                  <Stepper label="Bodyweight" value={bodyweight} unit="lb" step={5} min={80} onChange={changeBodyweight} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    {["cut", "maintain", "build"].map((g) => {
+                      const sel = fuelGoal === g;
+                      return (
+                        <button key={g} onClick={() => setFuelGoal(g)} aria-pressed={sel}
+                          style={{ flex: 1, background: sel ? "rgba(247,183,51,.08)" : C.surface2,
+                            border: `1px solid ${sel ? "rgba(247,183,51,.55)" : C.line}`, borderRadius: 12,
+                            padding: "10px 0", fontSize: 12.5, fontWeight: 600, color: sel ? C.energy : C.body, textTransform: "capitalize" }}>
+                          {g}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button onClick={calcTargets} style={{ ...btnG, width: "100%", marginTop: 12 }}>Calculate targets</button>
+                  <div style={{ color: C.muted, fontSize: 11, marginTop: 8 }}>Or set them by eye — protein drives the ring.</div>
+                </Card>
+              </div>
+            );
+          })()}
+
           {/* PROGRESS */}
           {tab === "progress" && (
             <div>
@@ -1292,6 +1551,7 @@ export default function Forge() {
           {[
             ["today", "Today", Home],
             ["train", "Train", Dumbbell],
+            ["fuel", "Fuel", Flame],
             ["progress", "Progress", TrendingUp],
             ["coach", "Coach", MessageSquare],
           ].map(([key, label, Ic]) => (
