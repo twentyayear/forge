@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 4890, strictPort: true,
-    proxy: { "/api": { target: "https://forgeitinfire.netlify.app", changeOrigin: true } },
+    proxy: { "/api": { target: "https://hartworkapp.netlify.app", changeOrigin: true } },
   },
 });

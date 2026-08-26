@@ -2,7 +2,7 @@
 
 TrainHeroic-style HARTWORK training app prototype — React + Vite, all data mocked.
 
-Live at [forgeitinfire.netlify.app](https://forgeitinfire.netlify.app).
+Live at [hartworkapp.netlify.app](https://hartworkapp.netlify.app).
 
 ```bash
 npm install
