@@ -15,7 +15,7 @@ export default async (req) => {
 
   const apiUrl = `${OFF_ORIGIN}/search?q=${encodeURIComponent(q)}&page_size=8&fields=product_name,brands,serving_size,nutriments`;
   const r = await fetch(apiUrl, {
-    headers: { "User-Agent": "Forge-Prototype/1.0 (personal use)" },
+    headers: { "User-Agent": "Hartwork-Prototype/1.0 (personal use)" },
   });
   if (!r.ok) return new Response("Upstream error", { status: 502 });
 

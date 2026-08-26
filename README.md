@@ -1,6 +1,6 @@
-# Forge
+# Hartwork
 
-TrainHeroic-style training app prototype — React + Vite, all data mocked.
+TrainHeroic-style HARTWORK training app prototype — React + Vite, all data mocked.
 
 Live at [forgeitinfire.netlify.app](https://forgeitinfire.netlify.app).
 

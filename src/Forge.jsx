@@ -11,8 +11,8 @@ const C = {
   bg: "#0D0F14", surface: "#151922", surface2: "#1C2230",
   line: "#262E3D", lineStrong: "#38445A",
   text: "#F1F3F7", body: "#C7CEDB", muted: "#8A93A6",
-  energy: "#F7B733", energyDeep: "#C98F1B",
-  recovery: "#4FD8BC", inkOnEnergy: "#181206",
+  energy: "#EF1E19", energyDeep: "#B01310",
+  recovery: "#4FD8BC", inkOnEnergy: "#FFFFFF",
 };
 
 const css = `
@@ -326,7 +326,7 @@ const Card = ({ children, style, ...p }) => (
 );
 const Pill = ({ children, tone, style }) => (
   <span style={{ borderRadius: 999, padding: "5px 11px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
-    background: tone === "energy" ? "rgba(247,183,51,.13)" : "rgba(79,216,188,.12)",
+    background: tone === "energy" ? "rgba(239,30,25,.13)" : "rgba(79,216,188,.12)",
     color: tone === "energy" ? C.energy : C.recovery, ...style }}>{children}</span>
 );
 const Badge = ({ letter }) => (
@@ -340,6 +340,21 @@ const IconStat = ({ Icon, n, t }) => (
     <div style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em", marginTop: 3, fontWeight: 600 }}>{t}</div>
   </div>
 );
+
+function HartMark({ size = 30, heart = "#fff" }) {
+  return (
+    <svg width={size} height={size * (48 / 64)} viewBox="0 0 64 48" aria-hidden="true">
+      <path d="M32 44 C14 32 4 22 4 12.5 C4 6 9 2 15 2 C21 2 26 6 32 14 C38 6 43 2 49 2 C55 2 60 6 60 12.5 C60 22 50 32 32 44 Z"
+        fill="none" stroke={heart} strokeWidth={4.5} strokeLinejoin="round" strokeLinecap="round" />
+      <polyline points="2,24 22,24 27,24 30,14 34,34 37,24 42,24 62,24"
+        fill="none" stroke="#EF1E19" strokeWidth={4} strokeLinejoin="round" strokeLinecap="round" />
+      <rect x="6" y="18" width="4" height="12" rx="1.5" fill="#fff" />
+      <rect x="2" y="15" width="4" height="18" rx="1.5" fill="#fff" />
+      <rect x="54" y="18" width="4" height="12" rx="1.5" fill="#fff" />
+      <rect x="58" y="15" width="4" height="18" rx="1.5" fill="#fff" />
+    </svg>
+  );
+}
 
 function Ring({ score, label = "Readiness" }) {
   const r = 52, circ = 2 * Math.PI * r;
@@ -394,7 +409,7 @@ function CalendarStrip({ selected, onSelect, doneToday, dotFor, labelFor }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 20px 8px" }}>
         <span className="ff-d" style={{ fontSize: 18, fontWeight: 700, color: C.text, letterSpacing: ".05em" }}>{fmtMonth(selDate)}</span>
         <button onClick={() => { onSelect(todayIso); scrollTo(todayIso); }}
-          style={{ background: "none", border: `1px solid ${selected === todayIso ? C.line : "rgba(247,183,51,.5)"}`, borderRadius: 8, padding: "5px 11px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: selected === todayIso ? C.muted : C.energy }}>
+          style={{ background: "none", border: `1px solid ${selected === todayIso ? C.line : "rgba(239,30,25,.5)"}`, borderRadius: 8, padding: "5px 11px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: selected === todayIso ? C.muted : C.energy }}>
           Today
         </button>
       </div>
@@ -752,10 +767,12 @@ export default function Forge() {
         <style>{css}</style>
         <div style={{ width: "100%", maxWidth: 380 }}>
           <div style={{ textAlign: "center", marginBottom: 40 }}>
-            <div style={{ width: 56, height: 56, margin: "0 auto 18px", borderRadius: 16, background: `linear-gradient(135deg, ${C.energy}, ${C.energyDeep})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Dumbbell size={28} color={C.inkOnEnergy} strokeWidth={2.5} />
+            <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <HartMark size={64} />
             </div>
-            <div className="ff-d" style={{ fontSize: 58, fontWeight: 800, color: C.text, textTransform: "uppercase", lineHeight: .95, letterSpacing: ".01em" }}>Forge</div>
+            <div className="ff-d" style={{ fontSize: 58, fontWeight: 800, textTransform: "uppercase", lineHeight: .95, letterSpacing: ".01em" }}>
+              <span style={{ color: "#EF1E19" }}>Hart</span><span style={{ color: C.text }}>work</span>
+            </div>
             <div style={{ color: C.muted, fontSize: 14, marginTop: 10 }}>Your coach. Your data. One plan.</div>
           </div>
           <input aria-label="Email" placeholder="Email" defaultValue="alex@email.com" style={inp} />
@@ -775,14 +792,14 @@ export default function Forge() {
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <div style={{ width: 30, height: 30, borderRadius: 9, background: `linear-gradient(135deg, ${C.energy}, ${C.energyDeep})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Dumbbell size={16} color={C.inkOnEnergy} strokeWidth={2.5} />
-            </div>
-            <span className="ff-d" style={{ fontSize: 23, fontWeight: 800, color: C.text, textTransform: "uppercase" }}>Forge</span>
+            <HartMark size={30} />
+            <span className="ff-d" style={{ fontSize: 23, fontWeight: 800, textTransform: "uppercase" }}>
+              <span style={{ color: "#EF1E19" }}>Hart</span><span style={{ color: C.text }}>work</span>
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
-              style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(247,183,51,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
+              style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(239,30,25,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
               {voiceOn ? <Volume2 size={15} /> : <VolumeX size={15} />} Voice
             </button>
             <button onClick={() => setShowSettings(true)} aria-expanded={showSettings} aria-label="Settings"
@@ -1354,8 +1371,8 @@ export default function Forge() {
                       const sel = fuelGoal === g;
                       return (
                         <button key={g} onClick={() => setFuelGoal(g)} aria-pressed={sel}
-                          style={{ flex: 1, background: sel ? "rgba(247,183,51,.08)" : C.surface2,
-                            border: `1px solid ${sel ? "rgba(247,183,51,.55)" : C.line}`, borderRadius: 12,
+                          style={{ flex: 1, background: sel ? "rgba(239,30,25,.08)" : C.surface2,
+                            border: `1px solid ${sel ? "rgba(239,30,25,.55)" : C.line}`, borderRadius: 12,
                             padding: "10px 0", fontSize: 12.5, fontWeight: 600, color: sel ? C.energy : C.body, textTransform: "capitalize" }}>
                           {g}
                         </button>
@@ -1428,7 +1445,7 @@ export default function Forge() {
                   const blob = new Blob([csv], { type: "text/csv" });
                   const a = document.createElement("a");
                   a.href = URL.createObjectURL(blob);
-                  a.download = `forge-history-${iso(TODAY)}.csv`;
+                  a.download = `hartwork-history-${iso(TODAY)}.csv`;
                   a.click();
                   URL.revokeObjectURL(a.href);
                 }}
@@ -1462,8 +1479,8 @@ export default function Forge() {
                       <div key={v.id} role="radio" aria-checked={sel} tabIndex={0}
                         onClick={() => pickVoice(v.id)}
                         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickVoice(v.id); } }}
-                        style={{ position: "relative", background: sel ? "rgba(247,183,51,.08)" : C.surface2,
-                          border: `1px solid ${sel ? "rgba(247,183,51,.55)" : C.line}`, borderRadius: 14,
+                        style={{ position: "relative", background: sel ? "rgba(239,30,25,.08)" : C.surface2,
+                          border: `1px solid ${sel ? "rgba(239,30,25,.55)" : C.line}`, borderRadius: 14,
                           padding: "12px 12px 10px", minHeight: 64 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
                           <span style={{ fontSize: 14, fontWeight: 700, color: sel ? C.energy : C.text }}>{v.name}</span>
@@ -1775,7 +1792,7 @@ const ava = {
 };
 function Stat({ n, t, hot }) {
   return (
-    <div style={{ flex: 1, background: C.surface, border: `1px solid ${hot ? "rgba(247,183,51,.45)" : C.line}`, borderRadius: 17, padding: "15px 10px", textAlign: "center" }}>
+    <div style={{ flex: 1, background: C.surface, border: `1px solid ${hot ? "rgba(239,30,25,.45)" : C.line}`, borderRadius: 17, padding: "15px 10px", textAlign: "center" }}>
       <div className="ff-d" style={{ fontSize: 31, fontWeight: 800, color: hot ? C.energy : C.text, lineHeight: 1 }}>{n}</div>
       <div style={{ fontSize: 9.5, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em", marginTop: 5, fontWeight: 600 }}>{t}</div>
     </div>
