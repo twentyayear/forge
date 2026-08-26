@@ -379,7 +379,7 @@ function Sheet({ title, onClose, children }) {
   );
 }
 
-function CalendarStrip({ selected, onSelect, doneToday }) {
+function CalendarStrip({ selected, onSelect, doneToday, dotFor, labelFor }) {
   const todayIso = iso(TODAY);
   const rowRef = useRef(null);
   const cellRefs = useRef({});
@@ -403,10 +403,15 @@ function CalendarStrip({ selected, onSelect, doneToday }) {
           const k = iso(d);
           const e = SCHEDULE[k];
           const isSel = k === selected, isToday = k === todayIso;
-          const dot = e ? ((e.status === "done" || (isToday && doneToday)) ? C.recovery : C.energy) : "transparent";
+          const dot = dotFor
+            ? (dotFor(k) || "transparent")
+            : (e ? ((e.status === "done" || (isToday && doneToday)) ? C.recovery : C.energy) : "transparent");
+          const label = labelFor
+            ? labelFor(k, d)
+            : `${fmtLong(d)}${e ? ` — ${e.name}${e.status === "done" ? ", completed" : ", planned"}` : ", rest day"}`;
           return (
             <button key={k} ref={(el) => { cellRefs.current[k] = el; }} onClick={() => onSelect(k)} aria-pressed={isSel}
-              aria-label={`${fmtLong(d)}${e ? ` — ${e.name}${e.status === "done" ? ", completed" : ", planned"}` : ", rest day"}`}
+              aria-label={label}
               style={{ flex: "0 0 46px", background: isSel ? C.surface2 : "none", border: `1px solid ${isSel ? C.lineStrong : "transparent"}`, borderRadius: 12, padding: "7px 0 6px", minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
               <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: ".08em", color: C.muted }}>{WD[d.getDay()]}</span>
               <span className="ff-d" style={{ fontSize: 17, fontWeight: 700, color: isToday ? C.energy : isSel ? C.text : C.body }}>{d.getDate()}</span>
@@ -512,6 +517,7 @@ export default function Forge() {
   ]);
   const [fuelLog, setFuelLog] = useState(loadFuelLog);
   const [fuelTargets, setFuelTargets] = useState(loadFuelTargets);
+  const [fuelDay, setFuelDay] = useState(iso(TODAY));
   const [foodQ, setFoodQ] = useState("");
   const [foodResults, setFoodResults] = useState(null);
   const [foodBusy, setFoodBusy] = useState(false);
@@ -604,7 +610,7 @@ export default function Forge() {
   };
 
   const addFuel = (entry) => {
-    const day = iso(TODAY);
+    const day = fuelDay;
     const item = {
       id: fuelIdRef.current++, name: entry.name, brand: entry.brand,
       kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0,
@@ -617,7 +623,7 @@ export default function Forge() {
 
       const prevProtein = prevRows.reduce((s, e) => s + (e.protein || 0), 0);
       const newProtein = dayLog.reduce((s, e) => s + (e.protein || 0), 0);
-      if (prevProtein < fuelTargets.protein && newProtein >= fuelTargets.protein) {
+      if (day === iso(TODAY) && prevProtein < fuelTargets.protein && newProtein >= fuelTargets.protein) {
         if (localStorage.getItem("forge.proteinSpokeDay") !== day) {
           localStorage.setItem("forge.proteinSpokeDay", day);
           speak(`Protein target hit — ${fuelTargets.protein} grams down. That's how you build.`);
@@ -627,7 +633,7 @@ export default function Forge() {
     });
   };
   const deleteFuel = (id) => {
-    const day = iso(TODAY);
+    const day = fuelDay;
     setFuelLog((cur) => {
       const next = { ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) };
       saveFuelLog(next);
@@ -1198,17 +1204,34 @@ export default function Forge() {
 
           {/* FUEL */}
           {tab === "fuel" && (() => {
-            const fuelToday = fuelLog[iso(TODAY)] ?? [];
+            const fuelToday = fuelLog[fuelDay] ?? [];
             const totals = fuelToday.reduce((t, e) => ({
               kcal: t.kcal + (e.kcal || 0), protein: t.protein + (e.protein || 0),
               carbs: t.carbs + (e.carbs || 0), fat: t.fat + (e.fat || 0),
             }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
             const proteinPct = Math.min(100, Math.round((totals.protein / fuelTargets.protein) * 100));
             const kcalLeft = Math.round(fuelTargets.kcal - totals.kcal);
+            const dotFor = (k) => {
+              const rows = fuelLog[k] ?? [];
+              if (!rows.length) return null;
+              const protein = rows.reduce((s, e) => s + (e.protein || 0), 0);
+              return protein >= fuelTargets.protein ? C.recovery : C.energy;
+            };
+            const labelFor = (k, d) => {
+              const rows = fuelLog[k] ?? [];
+              if (!rows.length) return `${fmtLong(d)} — nothing logged`;
+              const kcal = Math.round(rows.reduce((s, e) => s + (e.kcal || 0), 0));
+              return `${fmtLong(d)} — ${rows.length} foods, ${kcal} kcal`;
+            };
+            const isFuelToday = fuelDay === iso(TODAY);
             return (
               <div>
+                <CalendarStrip selected={fuelDay} onSelect={setFuelDay} dotFor={dotFor} labelFor={labelFor} />
                 <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>Fuel</h1>
-                <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 0" }}>{fmtLong(TODAY)}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "6px 0 0" }}>
+                  <div style={{ color: C.muted, fontSize: 13 }}>{fmtLong(new Date(fuelDay + "T00:00:00"))}</div>
+                  {!isFuelToday && <Pill tone="energy">{fuelDay < iso(TODAY) ? "Editing a past day" : "Editing a future day"}</Pill>}
+                </div>
 
                 <Card style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center" }}>
                   <Ring score={proteinPct} label="Protein" />
