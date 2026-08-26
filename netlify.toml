@@ -1,0 +1,12 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# SPA fallback — everything renders from index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
