@@ -117,11 +117,13 @@ const VIDEO_IDS = {
 function exHistory(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash += name.charCodeAt(i);
-  const isReps = /Push-Up|Plank/.test(name);
-  const baseMax = 95 + (hash % 40) * 5;
+  const base = EX_BASE[name];
+  const isReps = base === 0 || (base === undefined && /Push-Up|Plank/.test(name));
+  // working max ≈ est. 1RM above the day-to-day load; PR triple sits between the two
+  const baseMax = base > 0 ? Math.round((base * 1.25) / 5) * 5 : 95 + (hash % 40) * 5;
   const pr = isReps
-    ? { label: "22 reps", date: "Aug 14" }
-    : { label: `${baseMax + 20} lb × 3`, date: "Aug 9" };
+    ? { label: `${15 + (hash % 12)} reps`, date: "Aug 14" }
+    : { label: `${Math.round(((base > 0 ? base : baseMax / 1.25) * 1.15) / 5) * 5} lb × 3`, date: "Aug 9" };
   const dipWeek = (hash % 5) + 2;
   const series = Array.from({ length: 8 }, (_, k) => {
     const wk = k + 1;
@@ -227,7 +229,28 @@ function buildSchedule() {
   });
   return map;
 }
+const EX_BASE = Object.fromEntries(sessionCycle.flatMap((c) => c.exs.map((e) => [e.n, e.base])));
 const SCHEDULE = buildSchedule();
+
+// ---- Active-workout header helpers ----
+const BLOCK_TYPES = ["Strength / Power", "Strength / Power", "Hypertrophy", "Hypertrophy", "Accessory", "Finisher"];
+function lastFor(name) {
+  for (let o = 1; o <= 28; o++) {
+    const d = new Date(TODAY.getTime() - o * DAY_MS);
+    const e = SCHEDULE[iso(d)];
+    if (!e || e.status !== "done") continue;
+    const block = e.blocks.find((b) => b.name === name);
+    if (!block) continue;
+    const sets = block.sets;
+    if (sets.every((s) => s.w === 0)) {
+      const maxReps = Math.max(...sets.map((s) => s.reps));
+      return `${sets.length}×${maxReps} reps`;
+    }
+    const maxW = Math.max(...sets.map((s) => s.w));
+    return `${sets.length}×${sets[sets.length - 1].reps} @ ${maxW} lb`;
+  }
+  return null;
+}
 
 // ---- Readiness trend ----
 const READINESS_TODAY = 82;
@@ -393,7 +416,8 @@ export default function Forge() {
   const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
   const [active, setActive] = useState(null);        // { i, done }
-  const [entry, setEntry] = useState({ w: 0, reps: 0 });
+  const [grid, setGrid] = useState({});              // { [exIndex]: [{reps, w, done}] }
+  const [videoOpen, setVideoOpen] = useState(false);
   const [log, setLog] = useState([]);                // [{i, w, reps}]
   const [rest, setRest] = useState(null);            // seconds or null
   const [summary, setSummary] = useState(null);      // {sets, volume, minutes}
@@ -465,12 +489,16 @@ export default function Forge() {
   };
   useEffect(() => () => stopAudio(), []);
 
-  // Prefill weight/reps when the exercise changes
+  // Initialize the set grid when the exercise changes; collapse the video
   useEffect(() => {
-    if (active) {
+    if (active && grid[active.i] === undefined) {
       const ex = workout.exercises[active.i];
-      setEntry({ w: parseWeight(ex.load), reps: parseReps(ex.reps) });
+      const rows = Array.from({ length: ex.sets }, () => ({
+        reps: parseReps(ex.reps), w: parseWeight(ex.load) ?? 0, done: false,
+      }));
+      setGrid((g) => ({ ...g, [active.i]: rows }));
     }
+    setVideoOpen(false);
   }, [active?.i]); // eslint-disable-line
 
   // Rest countdown
@@ -497,7 +525,7 @@ export default function Forge() {
 
   const start = () => {
     setTab("train");
-    setLog([]); setSummary(null); setRest(null); setRpe(null);
+    setLog([]); setSummary(null); setRest(null); setRpe(null); setGrid({});
     startedAt.current = Date.now();
     setActive({ i: 0, done: 0 });
     speak("Welcome back, Alex. Today is Push Day A. Warm up well — then we get after it.");
@@ -511,21 +539,50 @@ export default function Forge() {
     speak("Workout complete. Outstanding session — Coach Mike will see today's numbers tonight.");
   };
 
-  const logSet = () => {
+  const updateRow = (k, patch) => {
+    setGrid({ ...grid, [active.i]: grid[active.i].map((r, ri) => (ri === k ? { ...r, ...patch } : r)) });
+  };
+  const addRow = () => {
+    const rows = grid[active.i];
+    if (!rows || !rows.length) return;
+    const last = rows[rows.length - 1];
+    setGrid({ ...grid, [active.i]: [...rows, { reps: last.reps, w: last.w, done: false }] });
+  };
+  const removeRow = () => {
+    const rows = grid[active.i];
+    if (!rows || rows.length <= 1) return;
+    const last = rows[rows.length - 1];
+    if (last.done) return;
+    setGrid({ ...grid, [active.i]: rows.slice(0, -1) });
+  };
+  const checkRow = (k) => {
     const ex = workout.exercises[active.i];
-    const newLog = [...log, { i: active.i, w: entry.w, reps: entry.reps }];
-    setLog(newLog);
-    const n = active.done + 1;
-    if (n >= ex.sets) {
-      if (active.i + 1 >= workout.exercises.length) { finish(newLog); return; }
-      const nx = workout.exercises[active.i + 1];
-      setActive({ i: active.i + 1, done: 0 });
-      setRest(90);
-      speak(`Nice work. Next up: ${nx.name}. ${nx.cues[0]}.`);
+    const bw = parseWeight(ex.load) === null;
+    const rows = grid[active.i];
+    const row = rows[k];
+    if (!row.done) {
+      const newRows = rows.map((r, ri) => (ri === k ? { ...r, done: true } : r));
+      setGrid({ ...grid, [active.i]: newRows });
+      const newLog = [...log, { i: active.i, w: bw ? 0 : row.w, reps: row.reps }];
+      setLog(newLog);
+      if (newRows.every((r) => r.done)) {
+        if (active.i + 1 >= workout.exercises.length) { finish(newLog); return; }
+        const nx = workout.exercises[active.i + 1];
+        setActive({ i: active.i + 1, done: 0 });
+        setRest(90);
+        speak(`Nice work. Next up: ${nx.name}. ${nx.cues[0]}.`);
+      } else {
+        setActive({ ...active, done: newRows.filter((r) => r.done).length });
+        setRest(90);
+        speak(cheers[idx.current++ % cheers.length]);
+      }
     } else {
-      setActive({ ...active, done: n });
-      setRest(90);
-      speak(cheers[idx.current++ % cheers.length]);
+      const newRows = rows.map((r, ri) => (ri === k ? { ...r, done: false } : r));
+      setGrid({ ...grid, [active.i]: newRows });
+      const w = bw ? 0 : row.w;
+      const li = log.findLastIndex((l) => l.i === active.i && l.w === w && l.reps === row.reps);
+      if (li !== -1) setLog([...log.slice(0, li), ...log.slice(li + 1)]);
+      setActive({ ...active, done: active.done - 1 });
     }
   };
 
@@ -810,37 +867,65 @@ export default function Forge() {
           {/* TRAIN — active */}
           {tab === "train" && active && (() => {
             const ex = workout.exercises[active.i];
-            const mySets = log.filter(l => l.i === active.i);
             const bw = parseWeight(ex.load) === null;
+            const rows = grid[active.i] || [];
+            const totalReps = log.reduce((s, l) => s + l.reps, 0);
+            const totalLb = log.reduce((s, l) => s + (l.w || 0) * l.reps, 0);
+            const last = lastFor(ex.name);
+            const chipStyle = { background: C.surface, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, color: C.body };
             return (
               <div style={{ textAlign: "center", paddingTop: 14 }}>
-                <div style={{ color: C.muted, fontSize: 11.5, textTransform: "uppercase", letterSpacing: ".14em", fontWeight: 600 }}>
-                  Exercise {active.i + 1} of {workout.exercises.length}
+                <div style={{ display: "flex", gap: 6, justifyContent: "center" }}
+                  aria-label={`Exercise ${active.i + 1} of ${workout.exercises.length}`}>
+                  {workout.exercises.map((_, k) => (
+                    <span key={k} style={{
+                      display: "inline-block", height: 8,
+                      width: k === active.i ? 22 : 8,
+                      borderRadius: 999,
+                      background: k < active.i ? C.recovery : k === active.i ? C.energy : C.line,
+                    }} />
+                  ))}
+                </div>
+                <div className="ff-d" style={{ marginTop: 10, fontSize: 21, fontWeight: 800, color: C.text }}>
+                  {totalReps}
+                  <span style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}> REPS</span>
+                  <span style={{ color: C.muted }}> · </span>
+                  {totalLb.toLocaleString()}
+                  <span style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}> LB</span>
+                </div>
+
+                <div style={{ marginTop: 14, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: C.energy, opacity: .85 }}>
+                  {"ABCDEF"[active.i]} · {BLOCK_TYPES[active.i]}
                 </div>
                 <h1 className="ff-d" style={{ fontSize: 33, fontWeight: 800, color: C.text, textTransform: "uppercase", lineHeight: 1.04, margin: "7px 0 0" }}>{ex.name}</h1>
                 <div style={{ color: C.muted, fontSize: 13.5, marginTop: 4 }}>Target {ex.reps} reps · {ex.load}</div>
+
+                <div style={{ display: "flex", gap: 7, justifyContent: "center", flexWrap: "wrap", marginTop: 10 }}>
+                  {last && (
+                    <button onClick={() => openExercise(ex.name)} style={chipStyle}>
+                      <span style={{ color: C.muted }}>Last </span>{last}
+                    </button>
+                  )}
+                  <button onClick={() => openExercise(ex.name)} style={chipStyle}>
+                    <span style={{ color: C.muted }}>PR </span>{exHistory(ex.name).pr.label}
+                  </button>
+                  {!bw && (
+                    <button onClick={() => openExercise(ex.name)} style={chipStyle}>
+                      <span style={{ color: C.muted }}>Max </span>{maxes[ex.name] ?? exHistory(ex.name).baseMax} lb
+                    </button>
+                  )}
+                </div>
 
                 <div style={{ position: "relative", width: 128, height: 128, margin: "20px auto 6px" }}>
                   <div className={talking ? "orb-live" : ""} style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `2px solid ${C.energy}`, opacity: talking ? 1 : .4 }} />
                   <div style={{ position: "absolute", inset: 14, borderRadius: "50%", background: `radial-gradient(circle at 35% 28%, ${C.energy}, ${C.energyDeep})`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
                     <div className="ff-d" style={{ fontSize: 37, fontWeight: 800, color: C.inkOnEnergy, lineHeight: 1 }}>
-                      {active.done}<span style={{ fontSize: 19 }}>/{ex.sets}</span>
+                      {active.done}<span style={{ fontSize: 19 }}>/{rows.length || ex.sets}</span>
                     </div>
                     {talking && <div className="eq" aria-hidden="true"><span/><span/><span/><span/></div>}
                   </div>
                 </div>
                 <div style={{ color: C.muted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".14em", fontWeight: 600 }}>Sets complete</div>
-
-                {/* Logged sets */}
-                {mySets.length > 0 && (
-                  <div style={{ display: "flex", gap: 7, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
-                    {mySets.map((s, k) => (
-                      <span key={k} className="chip-in" style={{ display: "inline-flex", alignItems: "center", gap: 5, borderRadius: 999, padding: "6px 11px", fontSize: 12, fontWeight: 600, background: C.surface, border: `1px solid ${C.line}`, color: C.body }}>
-                        <Check size={12} color={C.recovery} /> {s.w ? `${s.w}×${s.reps}` : `${s.reps} reps`}
-                      </span>
-                    ))}
-                  </div>
-                )}
 
                 {/* Coach line */}
                 {line && (
@@ -863,18 +948,53 @@ export default function Forge() {
                   </div>
                 )}
 
-                {/* Entry: weight + reps */}
-                <div style={{ display: "flex", gap: 10, margin: "16px 0 0" }}>
-                  <Stepper label="Weight" value={entry.w ?? 0} unit="lb" step={5}
-                    onChange={(v) => setEntry({ ...entry, w: v })}
-                    disabledText={bw ? "Body" : null} />
-                  <Stepper label="Reps" value={entry.reps} step={1} min={1}
-                    onChange={(v) => setEntry({ ...entry, reps: v })} />
-                </div>
+                {/* Set grid */}
+                <Card style={{ textAlign: "left", marginTop: 16, padding: "12px 14px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 28, fontSize: 9.5, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em" }}>Set</div>
+                    <div style={{ flex: 1, textAlign: "center", fontSize: 9.5, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em" }}>Reps</div>
+                    <div style={{ flex: 1, textAlign: "center", fontSize: 9.5, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em" }}>Lb</div>
+                    <div style={{ width: 44 }} />
+                  </div>
+                  {rows.map((row, k) => (
+                    <div key={k} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                      <div className="ff-d" style={{ width: 28, fontSize: 13, fontWeight: 700, color: C.muted }}>{k + 1}</div>
+                      <div style={{ flex: 1 }}>
+                        <input type="number" inputMode="numeric" aria-label={`Set ${k + 1} reps`} value={row.reps} disabled={row.done}
+                          onChange={(e) => updateRow(k, { reps: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                          className="ff-d"
+                          style={{ width: "100%", textAlign: "center", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, minHeight: 44, fontSize: 18, fontWeight: 700, color: C.text, opacity: row.done ? .55 : 1 }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        {bw ? (
+                          <div className="ff-d" style={{ width: "100%", boxSizing: "border-box", textAlign: "center", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, minHeight: 44, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: C.body }}>BW</div>
+                        ) : (
+                          <input type="number" inputMode="numeric" aria-label={`Set ${k + 1} weight`} value={row.w} disabled={row.done}
+                            onChange={(e) => updateRow(k, { w: parseInt(e.target.value, 10) || 0 })}
+                            className="ff-d"
+                            style={{ width: "100%", textAlign: "center", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, minHeight: 44, fontSize: 18, fontWeight: 700, color: C.text, opacity: row.done ? .55 : 1 }} />
+                        )}
+                      </div>
+                      <button aria-label={`Log set ${k + 1}`} onClick={() => checkRow(k)}
+                        style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                          background: row.done ? C.recovery : "none", border: row.done ? "none" : `1px solid ${C.lineStrong}` }}>
+                        <Check size={18} color={row.done ? C.bg : C.muted} />
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: 14, justifyContent: "center", alignItems: "center", marginTop: 12 }}>
+                    <button aria-label="Remove set" onClick={removeRow}
+                      style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.lineStrong}`, background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Minus size={15} color={C.body} />
+                    </button>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Set</span>
+                    <button aria-label="Add set" onClick={addRow}
+                      style={{ width: 36, height: 36, borderRadius: "50%", border: `1px solid ${C.lineStrong}`, background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Plus size={15} color={C.body} />
+                    </button>
+                  </div>
+                </Card>
 
-                <button onClick={logSet} style={{ ...btnP, width: "100%", marginTop: 12, fontSize: 16.5 }}>
-                  Log set {active.done + 1}
-                </button>
                 <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                   <button onClick={() => speak(ex.cues[Math.floor(Math.random() * ex.cues.length)])}
                     style={{ ...btnG, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
@@ -888,16 +1008,29 @@ export default function Forge() {
 
                 {VIDEO_IDS[ex.name] && (
                   <>
-                    <div style={{ position: "relative", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden",
-                      background: C.surface2, border: `1px solid ${C.line}`, margin: "14px 0 0", textAlign: "left" }}>
-                      <iframe key={ex.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
-                        src={`https://www.youtube-nocookie.com/embed/${VIDEO_IDS[ex.name]}`}
-                        title={`${ex.name} — form video`}
-                        loading="lazy"
-                        allowFullScreen
-                        allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" />
-                    </div>
-                    <div style={{ color: C.muted, fontSize: 11, textAlign: "left", marginTop: 6 }}>Form demo · YouTube</div>
+                    <button onClick={() => setVideoOpen(!videoOpen)} aria-expanded={videoOpen}
+                      style={{ width: "100%", background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: 10, display: "flex", gap: 12, alignItems: "center", textAlign: "left", marginTop: 14 }}>
+                      <img src={`https://i.ytimg.com/vi/${VIDEO_IDS[ex.name]}/mqdefault.jpg`} alt="" width={96} style={{ borderRadius: 9, display: "block" }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Form video</div>
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Watch on YouTube · tap to {videoOpen ? "collapse" : "expand"}</div>
+                      </div>
+                      <Play size={16} color={C.energy} />
+                    </button>
+                    {videoOpen && (
+                      <>
+                        <div style={{ position: "relative", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden",
+                          background: C.surface2, border: `1px solid ${C.line}`, margin: "14px 0 0", textAlign: "left" }}>
+                          <iframe key={ex.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+                            src={`https://www.youtube-nocookie.com/embed/${VIDEO_IDS[ex.name]}`}
+                            title={`${ex.name} — form video`}
+                            loading="lazy"
+                            allowFullScreen
+                            allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" />
+                        </div>
+                        <div style={{ color: C.muted, fontSize: 11, textAlign: "left", marginTop: 6 }}>Form demo · YouTube</div>
+                      </>
+                    )}
                   </>
                 )}
               </div>
