@@ -75,6 +75,34 @@ const cheers = [
 const parseWeight = (load) => { const m = load.match(/\d+/); return m ? parseInt(m[0], 10) : null; };
 const parseReps = (reps) => { const m = reps.match(/\d+(?!.*\d)/); return m ? parseInt(m[0], 10) : 10; };
 
+const VIDEO_IDS = {
+  "Back Squat": "my0tLDaWyDU",
+  "Barbell Bench Press": "4Y2ZdHCOXok",
+  "Barbell Curl": "QZEqB6wUPxQ",
+  "Barbell Row": "FWJR5Ve8bnQ",
+  "Cable Lateral Raise": "Sp8be0IFNvk",
+  "Close-Grip Bench Press": "UYJsFzqdgK4",
+  "Deadlift": "XxWcirHIwVo",
+  "EZ-Bar Curl": "5NsFLGUf0Fo",
+  "Incline DB Press": "IP4oeKh1Sd4",
+  "Kettlebell Swing": "DqkYuWR4zRI",
+  "Leg Press": "FNTd_mxtWmo",
+  "Overhead Rope Extension": "Fwl0T1_giQ0",
+  "Plank Hold": "6LqqeBtFn9M",
+  "Pull-Up": "eGo4IYlbE5g",
+  "Push Press": "gFmV302JErc",
+  "Push-Up Finisher": "I9fsqKE5XHo",
+  "Romanian Deadlift": "5zmlnbWb-g4",
+  "Rowing Sprint": "mrexeRFo4UM",
+  "Seated Cable Row": "vwHG9Jfu4sw",
+  "Seated DB Shoulder Press": "vlFGTI5JzjI",
+  "Sled Push": "9XRRXaUpnLk",
+  "Standing Calf Raise": "k8ipHzKeAkQ",
+  "Triceps Pushdown": "8WL0m0vLAPo",
+  "Walking Lunge": "Pbmj6xPo-Hw",
+  "Weighted Pull-Up": "Sj7k-tOFdsM",
+};
+
 // ---- Deterministic exercise history ----
 function exHistory(name) {
   let hash = 0;
@@ -225,10 +253,10 @@ const Label = ({ children }) => (
 const Card = ({ children, style, ...p }) => (
   <div {...p} style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 18, padding: 16, ...style }}>{children}</div>
 );
-const Pill = ({ children, tone }) => (
+const Pill = ({ children, tone, style }) => (
   <span style={{ borderRadius: 999, padding: "5px 11px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
     background: tone === "energy" ? "rgba(247,183,51,.13)" : "rgba(79,216,188,.12)",
-    color: tone === "energy" ? C.energy : C.recovery }}>{children}</span>
+    color: tone === "energy" ? C.energy : C.recovery, ...style }}>{children}</span>
 );
 const Badge = ({ letter }) => (
   <div style={{ width: 26, height: 26, borderRadius: "50%", border: `1px solid ${C.lineStrong}`, background: C.surface2,
@@ -369,6 +397,9 @@ export default function Forge() {
   const [exTab, setExTab] = useState("history");
   const [maxes, setMaxes] = useState({});
   const [removed, setRemoved] = useState({});   // {`${iso}:${letter}`: true} — deleted log rows            // name -> working max lb
+  const [comments, setComments] = useState([]); // { text, ref, time }, ref: { name, date } | null
+  const [commentRef, setCommentRef] = useState(null);
+  const [draft, setDraft] = useState("");
   const [devs, setDevs] = useState([
     { name: "Apple Watch", detail: "Heart rate · Workouts", on: true, icon: Watch },
     { name: "Whoop 5.0", detail: "Recovery · Strain · Sleep", on: true, icon: Activity },
@@ -418,6 +449,13 @@ export default function Forge() {
   };
 
   const openExercise = (name) => { setExDetail(name); setExTab("history"); };
+
+  const submitComment = () => {
+    if (!draft.trim()) return;
+    setComments([...comments, { text: draft.trim(), ref: commentRef, time: "Just now" }]);
+    setDraft("");
+    setCommentRef(null);
+  };
 
   const start = () => {
     setTab("train");
@@ -632,7 +670,7 @@ export default function Forge() {
                       })}
                       <div style={{ color: C.muted, fontSize: 11.5, marginTop: 14 }}>Logged · synced to Coach Mike</div>
                     </Card>
-                    <button onClick={() => setTab("coach")}
+                    <button onClick={() => { setCommentRef({ name: entry.name, date: fmtLong(selDate) }); setTab("coach"); }}
                       style={{ background: "none", border: "none", color: C.recovery, fontSize: 13, fontWeight: 600, marginTop: 12, padding: "8px 0" }}>
                       Comment on Session
                     </button>
@@ -901,6 +939,47 @@ export default function Forge() {
                 <MessageSquare size={16} /> Message Coach Mike
               </button>
 
+              <Label>Session comments</Label>
+              <Card style={{ padding: 0 }}>
+                {comments.length ? comments.map((c, i) => (
+                  <div key={i} style={{ padding: "14px 16px", borderBottom: i < comments.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                    {c.ref && (
+                      <div style={{ marginBottom: 6 }}>
+                        <Pill tone="energy" style={{ fontSize: 10 }}>{c.ref.name} · {c.ref.date}</Pill>
+                      </div>
+                    )}
+                    <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>{c.text}</div>
+                    <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>{c.time} · seen by Coach Mike</div>
+                  </div>
+                )) : (
+                  <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>
+                    No comments yet — open a logged workout and tap Comment on Session.
+                  </div>
+                )}
+                <div style={{ borderTop: `1px solid ${C.line}`, padding: "12px 16px 16px" }}>
+                  {/* Reference chip tied to commentRef */}
+                  {commentRef && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <Pill tone="energy" style={{ fontSize: 10 }}>Re: {commentRef.name} · {commentRef.date}</Pill>
+                      <button aria-label="Clear session reference" onClick={() => setCommentRef(null)}
+                        style={{ width: 32, height: 32, minWidth: 32, background: "none", border: "none", color: C.muted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input aria-label="Comment" placeholder="Write a comment…" value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) submitComment(); }}
+                      style={{ ...inp, marginBottom: 0, flex: 1, minHeight: 44 }} />
+                    <button onClick={submitComment} disabled={!draft.trim()}
+                      style={{ ...btnP, padding: "0 18px", minHeight: 44, opacity: draft.trim() ? 1 : .45, flexShrink: 0 }}>
+                      Send
+                    </button>
+                  </div>
+                </div>
+              </Card>
+
               <Label>Data your coach sees</Label>
               <Card style={{ padding: 0 }}>
                 {devs.map((dv, i) => {
@@ -1060,6 +1139,20 @@ export default function Forge() {
               ];
               return (
                 <div style={{ marginTop: 16 }}>
+                  {VIDEO_IDS[exDetail] && (
+                    <>
+                      <div style={{ position: "relative", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden",
+                        background: C.surface2, border: `1px solid ${C.line}`, marginBottom: 14 }}>
+                        <iframe style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+                          src={`https://www.youtube-nocookie.com/embed/${VIDEO_IDS[exDetail]}`}
+                          title={`${exDetail} — form video`}
+                          loading="lazy"
+                          allowFullScreen
+                          allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" />
+                      </div>
+                      <div style={{ color: C.muted, fontSize: 11, marginBottom: 14 }}>Form demo · YouTube</div>
+                    </>
+                  )}
                   {cues.map((c, j) => (
                     <div key={j} style={{ display: "flex", gap: 9, alignItems: "flex-start", marginBottom: 10 }}>
                       <span style={{ width: 5, height: 5, borderRadius: 99, background: C.energy, flexShrink: 0, marginTop: 7 }} />
