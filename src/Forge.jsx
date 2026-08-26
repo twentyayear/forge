@@ -341,18 +341,10 @@ const IconStat = ({ Icon, n, t }) => (
   </div>
 );
 
-function HartMark({ size = 30, heart = "#fff" }) {
+function HartMark({ size = 30 }) {
   return (
-    <svg width={size} height={size * (48 / 64)} viewBox="0 0 64 48" aria-hidden="true">
-      <path d="M32 44 C14 32 4 22 4 12.5 C4 6 9 2 15 2 C21 2 26 6 32 14 C38 6 43 2 49 2 C55 2 60 6 60 12.5 C60 22 50 32 32 44 Z"
-        fill="none" stroke={heart} strokeWidth={4.5} strokeLinejoin="round" strokeLinecap="round" />
-      <polyline points="2,24 22,24 27,24 30,14 34,34 37,24 42,24 62,24"
-        fill="none" stroke="#EF1E19" strokeWidth={4} strokeLinejoin="round" strokeLinecap="round" />
-      <rect x="6" y="18" width="4" height="12" rx="1.5" fill="#fff" />
-      <rect x="2" y="15" width="4" height="18" rx="1.5" fill="#fff" />
-      <rect x="54" y="18" width="4" height="12" rx="1.5" fill="#fff" />
-      <rect x="58" y="15" width="4" height="18" rx="1.5" fill="#fff" />
-    </svg>
+    <img src="/brand/hart_work_just_logo_dark.png" alt="" aria-hidden="true"
+      style={{ height: size, width: "auto", display: "block" }} />
   );
 }
 
@@ -770,9 +762,7 @@ export default function Forge() {
             <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <HartMark size={64} />
             </div>
-            <div className="ff-d" style={{ fontSize: 58, fontWeight: 800, textTransform: "uppercase", lineHeight: .95, letterSpacing: ".01em" }}>
-              <span style={{ color: "#EF1E19" }}>Hart</span><span style={{ color: C.text }}>work</span>
-            </div>
+            <img src="/brand/hartwork_text_logo.png" alt="Hartwork" style={{ height: 52, width: "auto", display: "block", margin: "0 auto" }} />
             <div style={{ color: C.muted, fontSize: 14, marginTop: 10 }}>Your coach. Your data. One plan.</div>
           </div>
           <input aria-label="Email" placeholder="Email" defaultValue="alex@email.com" style={inp} />
@@ -793,9 +783,7 @@ export default function Forge() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
             <HartMark size={30} />
-            <span className="ff-d" style={{ fontSize: 23, fontWeight: 800, textTransform: "uppercase" }}>
-              <span style={{ color: "#EF1E19" }}>Hart</span><span style={{ color: C.text }}>work</span>
-            </span>
+            <img src="/brand/hartwork_text_logo.png" alt="Hartwork" style={{ height: 19, width: "auto", display: "block" }} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
