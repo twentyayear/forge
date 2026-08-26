@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
   ChevronDown, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
-  Plus, Minus, Timer, X, PartyPopper, Gauge
+  Plus, Minus, Timer, X, PartyPopper, Gauge, Download
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
 
@@ -46,6 +46,17 @@ const EL_VOICES = [
   { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi",    tag: "Bold & driven", g: "F" },
   { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", tag: "Friendly & upbeat", g: "F" },
 ];
+
+const SPOKEN_WORDS = [
+  [/\bDB\b/g, "dumbbell"],
+  [/\bEZ-?Bar\b/gi, "easy bar"],
+  [/\bRDL\b/g, "Romanian deadlift"],
+  [/\bAMRAP\b/gi, "as many reps as possible"],
+  [/\bBW\b/g, "bodyweight"],
+  [/\b1RM\b/g, "one rep max"],
+  [/\bHRV\b/g, "heart rate variability"],
+];
+const speechify = (t) => SPOKEN_WORDS.reduce((s, [re, w]) => s.replace(re, w), t);
 
 // ---- Data ----
 const workout = {
@@ -231,6 +242,33 @@ function buildSchedule() {
 }
 const EX_BASE = Object.fromEntries(sessionCycle.flatMap((c) => c.exs.map((e) => [e.n, e.base])));
 const SCHEDULE = buildSchedule();
+
+// ---- History export (CSV) ----
+const csvField = (v) => {
+  const s = String(v);
+  return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+function buildHistoryCsv(todayLog, todayDone) {
+  const rows = [["date", "session", "block", "exercise", "set", "reps", "weight_lb", "volume_lb"]];
+  const doneDates = Object.keys(SCHEDULE).filter((k) => SCHEDULE[k].status === "done").sort();
+  doneDates.forEach((date) => {
+    const entry = SCHEDULE[date];
+    entry.blocks.forEach((b) => {
+      b.sets.forEach((s, si) => {
+        rows.push([date, entry.name, b.letter, b.name, si + 1, s.reps, s.w, s.reps * s.w]);
+      });
+    });
+  });
+  if (todayDone && todayLog.length) {
+    const counts = {};
+    todayLog.forEach((l) => {
+      counts[l.i] = (counts[l.i] || 0) + 1;
+      const w = l.w || 0;
+      rows.push([iso(TODAY), workout.name, "ABCDEF"[l.i], workout.exercises[l.i].name, counts[l.i], l.reps, w, w * l.reps]);
+    });
+  }
+  return rows.map((r) => r.map(csvField).join(",")).join("\n");
+}
 
 // ---- Active-workout header helpers ----
 const BLOCK_TYPES = ["Strength / Power", "Strength / Power", "Hypertrophy", "Hypertrophy", "Accessory", "Finisher"];
@@ -459,14 +497,15 @@ export default function Forge() {
     setLine(text);
     if (!voiceOn) return;
     stopAudio();
+    const spoken = speechify(text);
     const vid = overrideVoice || voicePick;
     try {
-      const cacheKey = vid + "|" + text;
+      const cacheKey = vid + "|" + spoken;
       let url = ttsCache.current[cacheKey];
       if (!url) {
         const res = await fetch(TTS_ENDPOINT, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice_id: vid }),
+          body: JSON.stringify({ text: spoken, voice_id: vid }),
         });
         if (!res.ok) throw new Error("HTTP " + res.status);
         url = URL.createObjectURL(await res.blob());
@@ -886,12 +925,12 @@ export default function Forge() {
                     }} />
                   ))}
                 </div>
-                <div className="ff-d" style={{ marginTop: 10, fontSize: 21, fontWeight: 800, color: C.text }}>
+                <div className="ff-d" style={{ marginTop: 12, fontSize: 34, fontWeight: 800, color: C.text }}>
                   {totalReps}
-                  <span style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}> REPS</span>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}> REPS</span>
                   <span style={{ color: C.muted }}> · </span>
                   {totalLb.toLocaleString()}
-                  <span style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}> LB</span>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}> LB</span>
                 </div>
 
                 <div style={{ marginTop: 14, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".14em", color: C.energy, opacity: .85 }}>
@@ -1090,6 +1129,20 @@ export default function Forge() {
                   </div>
                 ))}
               </Card>
+
+              <button onClick={() => {
+                  const csv = buildHistoryCsv(log, doneToday);
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = `forge-history-${iso(TODAY)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(a.href);
+                }}
+                style={{ ...btnG, width: "100%", marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <Download size={16} /> Export history (CSV)
+              </button>
+              <div style={{ color: C.muted, fontSize: 11, textAlign: "center", marginTop: 8 }}>Every logged set · CSV opens in any spreadsheet</div>
             </div>
           )}
 
