@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
   ChevronDown, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
-  Plus, Minus, Timer, X, PartyPopper, Gauge, Download
+  Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
 
@@ -472,6 +472,11 @@ export default function Forge() {
   const [draft, setDraft] = useState("");
   const [voiceOn, setVoiceOn] = useState(true);
   const [talking, setTalking] = useState(false);
+  const [coach, setCoach] = useState(() => localStorage.getItem("forge.coach") || "Mike Torres");
+  const [showSettings, setShowSettings] = useState(false);
+  const coachName = coach.trim() || "Mike Torres";
+  const coachFirst = coachName.split(/\s+/)[0];
+  const coachInitial = coachFirst[0].toUpperCase();
   const [voicePick, setVoicePick] = useState(() => {
     const v = localStorage.getItem("forge.voice");
     return EL_VOICES.some((x) => x.id === v) ? v : EL_VOICES[0].id;
@@ -575,7 +580,7 @@ export default function Forge() {
     const volume = finalLog.reduce((s, l) => s + (l.w || 0) * l.reps, 0);
     setSummary({ sets: finalLog.length, volume, minutes: mins });
     setActive(null); setRest(null); setDoneToday(true);
-    speak("Workout complete. Outstanding session — Coach Mike will see today's numbers tonight.");
+    speak(`Workout complete. Outstanding session — Coach ${coachFirst} will see today's numbers tonight.`);
   };
 
   const updateRow = (k, patch) => {
@@ -660,10 +665,16 @@ export default function Forge() {
             </div>
             <span className="ff-d" style={{ fontSize: 23, fontWeight: 800, color: C.text, textTransform: "uppercase" }}>Forge</span>
           </div>
-          <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
-            style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(247,183,51,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
-            {voiceOn ? <Volume2 size={15} /> : <VolumeX size={15} />} Voice
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
+              style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(247,183,51,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
+              {voiceOn ? <Volume2 size={15} /> : <VolumeX size={15} />} Voice
+            </button>
+            <button onClick={() => setShowSettings(true)} aria-expanded={showSettings} aria-label="Settings"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 11px", minHeight: 38, color: C.muted }}>
+              <Settings size={15} />
+            </button>
+          </div>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 104px" }}>
@@ -744,10 +755,10 @@ export default function Forge() {
                       <Stat n="12" t="Week streak" hot />
                     </div>
 
-                    <Label>From Coach Mike</Label>
+                    <Label>From Coach {coachFirst}</Label>
                     <Card>
                       <div style={{ display: "flex", gap: 12 }}>
-                        <div style={ava}>M</div>
+                        <div style={ava}>{coachInitial}</div>
                         <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.6 }}>
                           Bench is trending up nicely — I bumped Thursday's top set to 190. Watch that bar path on your last set.
                           <div style={{ color: C.muted, fontSize: 11.5, marginTop: 7 }}>Yesterday · reply in Coach tab</div>
@@ -802,7 +813,7 @@ export default function Forge() {
                           </div>
                         );
                       })}
-                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 14 }}>Logged · synced to Coach Mike</div>
+                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 14 }}>Logged · synced to Coach {coachFirst}</div>
                     </Card>
                     <button onClick={() => { setCommentRef({ name: entry.name, date: fmtLong(selDate) }); setTab("coach"); }}
                       style={{ background: "none", border: "none", color: C.recovery, fontSize: 13, fontWeight: 600, marginTop: 12, padding: "8px 0" }}>
@@ -822,7 +833,7 @@ export default function Forge() {
                         <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{entry.duration} · {entry.focus}</div>
                         <Pill tone="energy">Scheduled</Pill>
                       </div>
-                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 7 }}>Unlocks on the day — Coach Mike may still adjust the plan.</div>
+                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 7 }}>Unlocks on the day — Coach {coachFirst} may still adjust the plan.</div>
                     </Card>
                   </>
                 )}
@@ -849,7 +860,7 @@ export default function Forge() {
                 <PartyPopper size={40} color={C.inkOnEnergy} />
               </div>
               <h1 className="ff-d" style={{ fontSize: 40, fontWeight: 800, color: C.text, textTransform: "uppercase", lineHeight: 1, margin: 0 }}>Session complete</h1>
-              <div style={{ color: C.body, fontSize: 14, marginTop: 10 }}>{workout.name} · logged &amp; shared with Coach Mike</div>
+              <div style={{ color: C.body, fontSize: 14, marginTop: 10 }}>{workout.name} · logged &amp; shared with Coach {coachFirst}</div>
               <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
                 <Stat n={String(summary.sets)} t="Sets logged" />
                 <Stat n={summary.volume.toLocaleString()} t="lb volume" hot />
@@ -1152,9 +1163,9 @@ export default function Forge() {
               <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>Coach</h1>
 
               <Card style={{ marginTop: 14, display: "flex", gap: 13, alignItems: "center" }}>
-                <div style={{ ...ava, width: 50, height: 50, fontSize: 19 }}>M</div>
+                <div style={{ ...ava, width: 50, height: 50, fontSize: 19 }}>{coachInitial}</div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>Mike Torres</div>
+                  <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
                   <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · Ironworks Gym</div>
                 </div>
                 <Pill tone="recovery">Online</Pill>
@@ -1203,7 +1214,7 @@ export default function Forge() {
               </Card>
 
               <button style={{ ...btnG, width: "100%", marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <MessageSquare size={16} /> Message Coach Mike
+                <MessageSquare size={16} /> Message Coach {coachFirst}
               </button>
 
               <Label>Session comments</Label>
@@ -1216,7 +1227,7 @@ export default function Forge() {
                       </div>
                     )}
                     <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>{c.text}</div>
-                    <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>{c.time} · seen by Coach Mike</div>
+                    <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>{c.time} · seen by Coach {coachFirst}</div>
                   </div>
                 )) : (
                   <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>
@@ -1323,7 +1334,7 @@ export default function Forge() {
             </div>
 
             <div style={{ display: "flex", gap: 12, marginTop: 18 }}>
-              <div style={ava}>M</div>
+              <div style={ava}>{coachInitial}</div>
               <div style={{ flex: 1, background: C.surface2, borderRadius: 14, padding: "10px 14px", color: C.body, fontSize: 13, lineHeight: 1.55 }}>
                 {recentAvg >= longAvg
                   ? "Your readiness is trending higher than usual. Recovering is part of training — and you're doing it well."
@@ -1348,7 +1359,7 @@ export default function Forge() {
               </ResponsiveContainer>
             </div>
 
-            <div style={{ color: C.muted, fontSize: 11.5, marginTop: 12 }}>Synced from Whoop &amp; Apple Watch · visible to Coach Mike</div>
+            <div style={{ color: C.muted, fontSize: 11.5, marginTop: 12 }}>Synced from Whoop &amp; Apple Watch · visible to Coach {coachFirst}</div>
           </Sheet>
         )}
 
@@ -1434,6 +1445,25 @@ export default function Forge() {
                 </div>
               );
             })()}
+          </Sheet>
+        )}
+
+        {showSettings && (
+          <Sheet title="Settings" onClose={() => setShowSettings(false)}>
+            <div style={{ marginTop: 18 }}>
+              <Label>Coach name</Label>
+              <input aria-label="Coach name" maxLength={40} style={inp} value={coach}
+                onChange={(e) => { const v = e.target.value; setCoach(v); localStorage.setItem("forge.coach", v); }} />
+              <div style={{ color: C.muted, fontSize: 11.5, marginTop: -6, marginBottom: 16 }}>Shown wherever your coach appears — and spoken by the voice.</div>
+
+              <Card style={{ display: "flex", gap: 13, alignItems: "center" }}>
+                <div style={ava}>{coachInitial}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
+                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · Ironworks Gym</div>
+                </div>
+              </Card>
+            </div>
           </Sheet>
         )}
       </div>
