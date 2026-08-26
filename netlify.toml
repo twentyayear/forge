@@ -5,6 +5,14 @@
 [build.environment]
   NODE_VERSION = "22"
 
+[functions]
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/api/tts"
+  to = "/.netlify/functions/tts"
+  status = 200
+
 # SPA fallback — everything renders from index.html
 [[redirects]]
   from = "/*"

@@ -3,5 +3,8 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 4890, strictPort: true },
+  server: {
+    port: 4890, strictPort: true,
+    proxy: { "/api": { target: "https://forgeitinfire.netlify.app", changeOrigin: true } },
+  },
 });

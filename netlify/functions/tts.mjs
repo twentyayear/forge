@@ -1,0 +1,30 @@
+const ALLOWED_VOICES = new Set([
+  "TxGEqnHWrfWFTfGW9XjX", "pNInz6obpgDQGcFmaJgB", "JBFqnCBsd6RMkjVDRZzb",
+  "21m00Tcm4TlvDq8ikWAM", "AZnzlk1XvdvUeBnXmlld", "XrExE9yKIg1WjnnlVkGX",
+]);
+const EL_ORIGIN = "https://api.elevenlabs.io";
+
+export default async (req) => {
+  if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+  const key = process.env.ELEVENLABS_API_KEY;
+  if (!key) return new Response("TTS not configured", { status: 503 });
+  let body;
+  try { body = await req.json(); } catch { return new Response("Bad request", { status: 400 }); }
+  const text = String(body.text || "").slice(0, 300).trim();
+  const voice = String(body.voice_id || "");
+  if (!text) return new Response("Missing text", { status: 400 });
+  if (!ALLOWED_VOICES.has(voice)) return new Response("Unknown voice", { status: 400 });
+  const r = await fetch(`${EL_ORIGIN}/v1/text-to-speech/${voice}`, {
+    method: "POST",
+    headers: { "xi-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_turbo_v2_5",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+    }),
+  });
+  if (!r.ok) return new Response("Upstream error", { status: 502 });
+  return new Response(r.body, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" } });
+};
+
+export const config = { path: "/api/tts" };

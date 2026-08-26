@@ -22,20 +22,30 @@ const css = `
 button { cursor: pointer; font-family: 'Space Grotesk', system-ui, sans-serif; }
 button:focus-visible, input:focus-visible { outline: 2px solid ${C.recovery}; outline-offset: 2px; border-radius: 12px; }
 button:active { transform: scale(.985); }
-@keyframes orbPulse { 0%,100%{transform:scale(1);opacity:.55} 50%{transform:scale(1.28);opacity:.12} }
-.orb-live { animation: orbPulse 1.4s ease-in-out infinite; }
-@keyframes eq { 0%,100%{transform:scaleY(.35)} 50%{transform:scaleY(1)} }
-.eq span { display:inline-block; width:3px; height:14px; margin:0 2px; border-radius:2px;
-  background:${C.inkOnEnergy}; transform-origin:bottom; animation: eq .7s ease-in-out infinite; }
-.eq span:nth-child(2){animation-delay:.15s}.eq span:nth-child(3){animation-delay:.3s}.eq span:nth-child(4){animation-delay:.1s}
 @keyframes popIn { 0%{transform:scale(.6);opacity:0} 70%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
 .pop { animation: popIn .5s cubic-bezier(.2,.9,.3,1) both; }
 @keyframes chipIn { from{transform:translateY(4px);opacity:0} to{transform:translateY(0);opacity:1} }
 .chip-in { animation: chipIn .25s ease-out both; }
 .cal-row { scrollbar-width: none; }
 .cal-row::-webkit-scrollbar { display: none; }
+@keyframes orbPulse { 0%,100%{transform:scale(1);opacity:.55} 50%{transform:scale(1.28);opacity:.12} }
+.orb-live { animation: orbPulse 1.4s ease-in-out infinite; }
+@keyframes eq { 0%,100%{transform:scaleY(.35)} 50%{transform:scaleY(1)} }
+.eq span { display:inline-block; width:3px; height:14px; margin:0 2px; border-radius:2px;
+  background:${C.inkOnEnergy}; transform-origin:bottom; animation: eq .7s ease-in-out infinite; }
+.eq span:nth-child(2){animation-delay:.15s}.eq span:nth-child(3){animation-delay:.3s}.eq span:nth-child(4){animation-delay:.1s}
 @media (prefers-reduced-motion: reduce){ .orb-live,.eq span,.pop,.chip-in{animation:none} button:active{transform:none} }
 `;
+
+const TTS_ENDPOINT = "/api/tts";
+const EL_VOICES = [
+  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",    tag: "Energetic hype coach", g: "M" },
+  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam",    tag: "Deep & steady", g: "M" },
+  { id: "JBFqnCBsd6RMkjVDRZzb", name: "George",  tag: "Calm & composed", g: "M" },
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel",  tag: "Warm & clear", g: "F" },
+  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi",    tag: "Bold & driven", g: "F" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", tag: "Friendly & upbeat", g: "F" },
+];
 
 // ---- Data ----
 const workout = {
@@ -382,7 +392,6 @@ export default function Forge() {
   const [screen, setScreen] = useState("login");
   const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
-  const [voiceOn, setVoiceOn] = useState(true);
   const [active, setActive] = useState(null);        // { i, done }
   const [entry, setEntry] = useState({ w: 0, reps: 0 });
   const [log, setLog] = useState([]);                // [{i, w, reps}]
@@ -392,7 +401,6 @@ export default function Forge() {
   const [showReadiness, setShowReadiness] = useState(false);
   const [rpe, setRpe] = useState(null);
   const [line, setLine] = useState(null);
-  const [talking, setTalking] = useState(false);
   const [exDetail, setExDetail] = useState(null);    // exercise name or null
   const [exTab, setExTab] = useState("history");
   const [maxes, setMaxes] = useState({});
@@ -400,6 +408,15 @@ export default function Forge() {
   const [comments, setComments] = useState([]); // { text, ref, time }, ref: { name, date } | null
   const [commentRef, setCommentRef] = useState(null);
   const [draft, setDraft] = useState("");
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [talking, setTalking] = useState(false);
+  const [voicePick, setVoicePick] = useState(() => {
+    const v = localStorage.getItem("forge.voice");
+    return EL_VOICES.some((x) => x.id === v) ? v : EL_VOICES[0].id;
+  });
+  const [voiceStatus, setVoiceStatus] = useState(null);
+  const audioRef = useRef(null);
+  const ttsCache = useRef({});
   const [devs, setDevs] = useState([
     { name: "Apple Watch", detail: "Heart rate · Workouts", on: true, icon: Watch },
     { name: "Whoop 5.0", detail: "Recovery · Strain · Sleep", on: true, icon: Activity },
@@ -410,22 +427,43 @@ export default function Forge() {
   const idx = useRef(0);
   const startedAt = useRef(null);
 
-  const speak = (text) => {
+  const stopAudio = () => {
+    if (audioRef.current) { try { audioRef.current.pause(); } catch (e) {} audioRef.current = null; }
+    setTalking(false);
+  };
+  const speak = async (text, overrideVoice) => {
     setLine(text);
     if (!voiceOn) return;
+    stopAudio();
+    const vid = overrideVoice || voicePick;
     try {
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
-        u.rate = 1.02;
-        u.onstart = () => setTalking(true);
-        u.onend = () => setTalking(false);
-        u.onerror = () => setTalking(false);
-        window.speechSynthesis.speak(u);
+      const cacheKey = vid + "|" + text;
+      let url = ttsCache.current[cacheKey];
+      if (!url) {
+        const res = await fetch(TTS_ENDPOINT, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice_id: vid }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        url = URL.createObjectURL(await res.blob());
+        ttsCache.current[cacheKey] = url;
       }
-    } catch (e) {}
+      const a = new Audio(url);
+      audioRef.current = a;
+      a.onplay = () => setTalking(true);
+      a.onended = () => setTalking(false);
+      a.onerror = () => setTalking(false);
+      await a.play();
+      setVoiceStatus("ok");
+    } catch (e) { setVoiceStatus("fail"); setTalking(false); }
   };
-  useEffect(() => () => { try { window.speechSynthesis?.cancel(); } catch (e) {} }, []);
+  const pickVoice = (id) => {
+    setVoicePick(id); setVoiceStatus(null);
+    localStorage.setItem("forge.voice", id);
+    const v = EL_VOICES.find((x) => x.id === id);
+    speak(`Hey Alex — I'm ${v.name}. Let's get after it.`, id);
+  };
+  useEffect(() => () => stopAudio(), []);
 
   // Prefill weight/reps when the exercise changes
   useEffect(() => {
@@ -526,7 +564,7 @@ export default function Forge() {
             </div>
             <span className="ff-d" style={{ fontSize: 23, fontWeight: 800, color: C.text, textTransform: "uppercase" }}>Forge</span>
           </div>
-          <button onClick={() => setVoiceOn(!voiceOn)} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
+          <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
             style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(247,183,51,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
             {voiceOn ? <Volume2 size={15} /> : <VolumeX size={15} />} Voice
           </button>
@@ -842,11 +880,26 @@ export default function Forge() {
                     style={{ ...btnG, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
                     <Mic size={15} /> Form cue
                   </button>
-                  <button onClick={() => { log.length ? finish(log) : setActive(null); try { window.speechSynthesis?.cancel(); } catch (e) {} }}
+                  <button onClick={() => { stopAudio(); log.length ? finish(log) : setActive(null); }}
                     style={{ ...btnG, flex: 1 }}>
                     End workout
                   </button>
                 </div>
+
+                {VIDEO_IDS[ex.name] && (
+                  <>
+                    <div style={{ position: "relative", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden",
+                      background: C.surface2, border: `1px solid ${C.line}`, margin: "14px 0 0", textAlign: "left" }}>
+                      <iframe key={ex.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+                        src={`https://www.youtube-nocookie.com/embed/${VIDEO_IDS[ex.name]}`}
+                        title={`${ex.name} — form video`}
+                        loading="lazy"
+                        allowFullScreen
+                        allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" />
+                    </div>
+                    <div style={{ color: C.muted, fontSize: 11, textAlign: "left", marginTop: 6 }}>Form demo · YouTube</div>
+                  </>
+                )}
               </div>
             );
           })()}
@@ -919,6 +972,34 @@ export default function Forge() {
                   <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · Ironworks Gym</div>
                 </div>
                 <Pill tone="recovery">Online</Pill>
+              </Card>
+
+              <Label>Your coach's voice</Label>
+              <Card>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+                  {EL_VOICES.map((v) => {
+                    const sel = voicePick === v.id;
+                    return (
+                      <div key={v.id} role="radio" aria-checked={sel} tabIndex={0}
+                        onClick={() => pickVoice(v.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickVoice(v.id); } }}
+                        style={{ position: "relative", background: sel ? "rgba(247,183,51,.08)" : C.surface2,
+                          border: `1px solid ${sel ? "rgba(247,183,51,.55)" : C.line}`, borderRadius: 14,
+                          padding: "12px 12px 10px", minHeight: 64 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: sel ? C.energy : C.text }}>{v.name}</span>
+                          <span style={{ fontSize: 9, color: C.muted, border: `1px solid ${C.line}`, borderRadius: 6, padding: "2px 5px" }}>{v.g}</span>
+                        </div>
+                        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>{v.tag}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {voiceStatus === "fail" && (
+                  <div style={{ color: C.muted, fontSize: 11, marginTop: 12 }}>
+                    Voice unavailable right now — coach will text instead.
+                  </div>
+                )}
               </Card>
 
               <Label>Recent updates</Label>
