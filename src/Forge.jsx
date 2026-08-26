@@ -768,7 +768,7 @@ export default function Forge() {
                     <div style={{ flex: 1, textAlign: "left" }}>
                       <div style={{ color: C.recovery, fontSize: 13, fontWeight: 600 }}>Rest {Math.floor(rest / 60)}:{String(rest % 60).padStart(2, "0")}</div>
                       <div style={{ height: 4, background: "rgba(79,216,188,.18)", borderRadius: 2, marginTop: 5, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${(rest / 90) * 100}%`, background: C.recovery, borderRadius: 2, transition: "width 1s linear" }} />
+                        <div style={{ height: "100%", width: "100%", transform: `scaleX(${rest / 90})`, transformOrigin: "left", background: C.recovery, borderRadius: 2, transition: "transform 1s linear" }} />
                       </div>
                     </div>
                     <button aria-label="Skip rest" onClick={() => setRest(null)} style={{ background: "none", border: "none", color: C.recovery, display: "flex", padding: 6 }}><X size={16} /></button>
