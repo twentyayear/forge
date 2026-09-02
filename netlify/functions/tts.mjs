@@ -11,13 +11,15 @@ export default async (req) => {
   const voice = String(body.voice_id || "");
   if (!text) return new Response("Missing text", { status: 400 });
   if (!ALLOWED_VOICES.has(voice)) return new Response("Unknown voice", { status: 400 });
+  // real pause at each sentence boundary — models rush periods on their own
+  const spoken = text.replace(/([.!?])\s+/g, '$1 <break time="0.6s" /> ');
   const r = await fetch(`${EL_ORIGIN}/v1/text-to-speech/${voice}`, {
     method: "POST",
     headers: { "xi-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({
-      text,
-      model_id: "eleven_turbo_v2_5",
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      text: spoken,
+      model_id: "eleven_multilingual_v2",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.2, use_speaker_boost: true, speed: 0.85 },
     }),
   });
   if (!r.ok) return new Response("Upstream error", { status: 502 });
