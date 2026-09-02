@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
   ChevronDown, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
-  Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings
+  Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings, Lock,
+  Zap, Smile, Brain, Droplets
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
 
@@ -40,14 +41,7 @@ button:active { transform: scale(.985); }
 `;
 
 const TTS_ENDPOINT = "/api/tts";
-const EL_VOICES = [
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh",    tag: "Energetic hype coach", g: "M" },
-  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam",    tag: "Deep & steady", g: "M" },
-  { id: "JBFqnCBsd6RMkjVDRZzb", name: "George",  tag: "Calm & composed", g: "M" },
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel",  tag: "Warm & clear", g: "F" },
-  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi",    tag: "Bold & driven", g: "F" },
-  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", tag: "Friendly & upbeat", g: "F" },
-];
+const KYLE_VOICE = "ZAIovxRU9FXNYmauX8CL";
 
 const SPOKEN_WORDS = [
   [/\bDB\b/g, "dumbbell"],
@@ -98,33 +92,162 @@ const cheers = [
 const parseWeight = (load) => { const m = load.match(/\d+/); return m ? parseInt(m[0], 10) : null; };
 const parseReps = (reps) => { const m = reps.match(/\d+(?!.*\d)/); return m ? parseInt(m[0], 10) : 10; };
 
-const VIDEO_IDS = {
-  "Back Squat": "my0tLDaWyDU",
-  "Barbell Bench Press": "4Y2ZdHCOXok",
-  "Barbell Curl": "QZEqB6wUPxQ",
-  "Barbell Row": "FWJR5Ve8bnQ",
-  "Cable Lateral Raise": "Sp8be0IFNvk",
-  "Close-Grip Bench Press": "UYJsFzqdgK4",
-  "Deadlift": "XxWcirHIwVo",
-  "EZ-Bar Curl": "5NsFLGUf0Fo",
-  "Incline DB Press": "IP4oeKh1Sd4",
-  "Kettlebell Swing": "DqkYuWR4zRI",
-  "Leg Press": "FNTd_mxtWmo",
-  "Overhead Rope Extension": "Fwl0T1_giQ0",
-  "Plank Hold": "6LqqeBtFn9M",
-  "Pull-Up": "eGo4IYlbE5g",
-  "Push Press": "gFmV302JErc",
-  "Push-Up Finisher": "I9fsqKE5XHo",
-  "Romanian Deadlift": "5zmlnbWb-g4",
-  "Rowing Sprint": "mrexeRFo4UM",
-  "Seated Cable Row": "vwHG9Jfu4sw",
-  "Seated DB Shoulder Press": "vlFGTI5JzjI",
-  "Sled Push": "9XRRXaUpnLk",
-  "Standing Calf Raise": "k8ipHzKeAkQ",
-  "Triceps Pushdown": "8WL0m0vLAPo",
-  "Walking Lunge": "Pbmj6xPo-Hw",
-  "Weighted Pull-Up": "Sj7k-tOFdsM",
-};
+const EX_LIB = [
+  // ---- Existing 25 ----
+  { name: "Barbell Bench Press", equipment: "Barbell", muscles: "Chest · Shoulders · Triceps", base: 185, video: "4Y2ZdHCOXok",
+    blurb: "The standard for upper body pressing strength. Build it heavy and control the bar the whole way down.",
+    cues: ["Feet planted, slight arch, shoulder blades pinned back", "Bar touches mid-chest — no bouncing", "Drive up and slightly back toward the rack"] },
+  { name: "Seated DB Shoulder Press", equipment: "Dumbbell", muscles: "Shoulders · Triceps", base: 55, video: "vlFGTI5JzjI",
+    blurb: "Builds overhead strength and shoulder stability without a spotter. Go through a full range every rep.",
+    cues: ["Ribs down — don't flare at the bottom", "Elbows about 30° in front of your body", "Lock out without shrugging"] },
+  { name: "Incline DB Press", equipment: "Dumbbell", muscles: "Upper Chest · Shoulders", base: 60, video: "IP4oeKh1Sd4",
+    blurb: "Targets the upper chest that flat pressing misses. Keep the bench angle modest — steep angles turn it into a shoulder press.",
+    cues: ["Bench at 30° — higher shifts load to shoulders", "Lower until upper arm dips just below parallel", "Press up and slightly together"] },
+  { name: "Cable Lateral Raise", equipment: "Cable", muscles: "Side Delts", base: 15, video: "Sp8be0IFNvk",
+    blurb: "Isolates the side delt with constant tension the whole rep — better than dumbbells for building width.",
+    cues: ["Lead with the elbow, not the hand", "Stop at shoulder height", "Two seconds down, every rep"] },
+  { name: "Overhead Rope Extension", equipment: "Cable", muscles: "Triceps", base: 42, video: "Fwl0T1_giQ0",
+    blurb: "Hits the long head of the triceps with a deep stretch overhead — a finisher that adds real arm size.",
+    cues: ["Elbows stay close to your ears", "Full stretch at the bottom", "Squeeze hard at lockout"] },
+  { name: "Push-Up Finisher", equipment: "Bodyweight", muscles: "Chest · Triceps · Core", base: 0, video: "I9fsqKE5XHo",
+    blurb: "Bodyweight finisher for max reps — burns out what heavy pressing left in the tank.",
+    cues: ["One straight line, head to heels", "Chest to an inch off the floor", "Stop one rep before form breaks"] },
+  { name: "Deadlift", equipment: "Barbell", muscles: "Back · Glutes · Hamstrings", base: 225, video: "XxWcirHIwVo",
+    blurb: "The king of posterior chain lifts. Build the pull from the floor, not the back.",
+    cues: ["Bar over mid-foot before you pull", "Push the floor away — hips and shoulders rise together", "Lock out with glutes, not lower back"] },
+  { name: "Pull-Up", equipment: "Bodyweight", muscles: "Back · Biceps", base: 0, video: "eGo4IYlbE5g",
+    blurb: "The gold standard for back width. Full hang to chin over the bar, every rep.",
+    cues: ["Start from a dead hang, shoulders engaged", "Pull elbows down and back, not just up", "Chin clears the bar under control"] },
+  { name: "Barbell Row", equipment: "Barbell", muscles: "Back · Biceps", base: 135, video: "FWJR5Ve8bnQ",
+    blurb: "Builds back thickness and pulling strength. Keep the torso angle locked — don't let the hips rise on the pull.",
+    cues: ["Hinge to roughly 45°, flat back", "Pull the bar to your lower ribs", "No jerking — control the weight down"] },
+  { name: "Seated Cable Row", equipment: "Cable", muscles: "Back · Biceps", base: 120, video: "vwHG9Jfu4sw",
+    blurb: "Builds mid-back thickness with a controlled, strict pull — no momentum needed.",
+    cues: ["Sit tall, chest up through the whole rep", "Pull to your stomach, elbows close", "Pause and squeeze the shoulder blades together"] },
+  { name: "Barbell Curl", equipment: "Barbell", muscles: "Biceps", base: 65, video: "QZEqB6wUPxQ",
+    blurb: "The classic mass builder for the biceps. Strict form beats heavier weight swung with the hips.",
+    cues: ["Elbows pinned to your sides", "Curl without swinging the torso", "Lower all the way — no partial reps"] },
+  { name: "Back Squat", equipment: "Barbell", muscles: "Quads · Glutes", base: 205, video: "my0tLDaWyDU",
+    blurb: "The foundational lower body lift. Depth and a braced core matter more than the number on the bar.",
+    cues: ["Brace hard before you unrack", "Hips and knees break together, sit between your heels", "Drive through the whole foot to stand"] },
+  { name: "Romanian Deadlift", equipment: "Barbell", muscles: "Hamstrings · Glutes", base: 155, video: "5zmlnbWb-g4",
+    blurb: "Builds hamstring strength through a deep stretch. This is a hip hinge, not a squat — keep the bar close.",
+    cues: ["Soft knees, hinge at the hips", "Bar stays close, sliding down your thighs", "Stop when you feel the hamstring stretch, not lower back rounding"] },
+  { name: "Walking Lunge", equipment: "Dumbbell", muscles: "Quads · Glutes", base: 40, video: "Pbmj6xPo-Hw",
+    blurb: "Unilateral leg work that exposes and fixes side-to-side imbalances.",
+    cues: ["Step long enough for a 90° front knee", "Torso stays tall, no leaning forward", "Push through the front heel to stand"] },
+  { name: "Leg Press", equipment: "Machine", muscles: "Quads · Glutes", base: 270, video: "FNTd_mxtWmo",
+    blurb: "Loads the legs heavy with the back fully supported — a safe way to push volume.",
+    cues: ["Feet shoulder-width on the platform", "Knees track over your toes, don't cave in", "Don't lock out hard or let hips lift off the pad"] },
+  { name: "Standing Calf Raise", equipment: "Machine", muscles: "Calves", base: 90, video: "k8ipHzKeAkQ",
+    blurb: "Builds calf size and ankle strength through a full range of motion — most people cut this rep short.",
+    cues: ["Full stretch at the bottom", "Rise all the way onto the toes", "Pause a beat at the top before lowering"] },
+  { name: "Push Press", equipment: "Barbell", muscles: "Shoulders · Triceps", base: 115, video: "gFmV302JErc",
+    blurb: "Uses leg drive to move more weight overhead than a strict press — builds explosive pressing power.",
+    cues: ["Slight dip, straight down, straight up", "Drive through the legs, not the arms first", "Punch through and lock out overhead"] },
+  { name: "Weighted Pull-Up", equipment: "Bodyweight", muscles: "Back · Biceps", base: 25, video: "Sj7k-tOFdsM",
+    blurb: "Adds external load once bodyweight pull-ups get easy — the next step for back strength.",
+    cues: ["Start from a dead hang under load", "Pull without kipping or swinging", "Full lockout at the bottom every rep"] },
+  { name: "Close-Grip Bench Press", equipment: "Barbell", muscles: "Triceps · Chest", base: 155, video: "UYJsFzqdgK4",
+    blurb: "Shifts bench press emphasis onto the triceps with a narrower grip. Elbows track close, not flared.",
+    cues: ["Hands just inside shoulder width", "Elbows track close to the body on the way down", "Drive up focusing on tricep lockout"] },
+  { name: "EZ-Bar Curl", equipment: "Barbell", muscles: "Biceps", base: 60, video: "5NsFLGUf0Fo",
+    blurb: "The angled grip takes stress off the wrists while still loading the biceps heavy.",
+    cues: ["Elbows stay tucked at your sides", "Curl through a full range, no bouncing", "Control the lowering — don't just drop it"] },
+  { name: "Triceps Pushdown", equipment: "Cable", muscles: "Triceps", base: 55, video: "8WL0m0vLAPo",
+    blurb: "Simple, effective triceps isolation with constant cable tension top to bottom.",
+    cues: ["Elbows locked at your sides the whole set", "Extend fully without leaning on the bar", "Control the return — don't let the weight stack slam"] },
+  { name: "Kettlebell Swing", equipment: "Kettlebell", muscles: "Glutes · Hamstrings · Core", base: 53, video: "DqkYuWR4zRI",
+    blurb: "A hip-hinge power move that trains the posterior chain explosively — this is a hip snap, not a squat or an arm lift.",
+    cues: ["Hinge the hips back, load the hamstrings", "Snap the hips forward — the arms just follow", "Bell floats to chest height, no shoulder lifting"] },
+  { name: "Rowing Sprint", equipment: "Machine", muscles: "Full Body · Conditioning", base: 0, video: "mrexeRFo4UM",
+    blurb: "A full-body conditioning piece — legs drive the power, arms finish the pull.",
+    cues: ["Legs drive first, then hips, then arms", "Keep the back flat through the whole stroke", "Recover in the same order you drove — arms, hips, legs"] },
+  { name: "Sled Push", equipment: "Machine", muscles: "Quads · Glutes · Conditioning", base: 180, video: "9XRRXaUpnLk",
+    blurb: "Brutal, low-skill leg conditioning with almost zero eccentric load — safe to push hard.",
+    cues: ["Low shin angle, drive from the balls of your feet", "Short, powerful steps — don't overstride", "Keep the arms locked, let the legs do the work"] },
+  { name: "Plank Hold", equipment: "Bodyweight", muscles: "Core", base: 0, video: "6LqqeBtFn9M",
+    blurb: "Builds core stability under time, not reps — the whole point is resisting movement, not creating it.",
+    cues: ["Straight line from head to heels", "Squeeze glutes and brace the abs, don't let hips sag", "Breathe — don't hold your breath through the set"] },
+  // ---- New 25 ----
+  { name: "Dumbbell Bench Press", equipment: "Dumbbell", muscles: "Chest · Triceps", base: 65, video: "YQ2s_Y7g5Qk",
+    blurb: "Dumbbells let each arm work independently and add a deeper stretch than a barbell bench.",
+    cues: ["Elbows at about 45° to your torso", "Lower until upper arms are level with the bench", "Press up and slightly in without clanking the dumbbells"] },
+  { name: "One-Arm DB Row", equipment: "Dumbbell", muscles: "Back · Biceps", base: 70, video: "pYcpY20QaE8",
+    blurb: "Trains each side of the back independently and lets you load heavier with a braced position.",
+    cues: ["Flat back, brace the free hand on the bench", "Pull the elbow up and back, not out", "Squeeze at the top, control it down"] },
+  { name: "Goblet Squat", equipment: "Kettlebell", muscles: "Quads · Glutes", base: 60, video: "MxsFDhcyFyE",
+    blurb: "The front-loaded weight forces an upright torso — a great way to groove squat depth and pattern.",
+    cues: ["Hold the bell tight to your chest", "Sit straight down between your heels", "Elbows brush your knees at the bottom"] },
+  { name: "Barbell Hip Thrust", equipment: "Barbell", muscles: "Glutes · Hamstrings", base: 225, video: "EF7jXP17DPE",
+    blurb: "The most direct way to overload the glutes. Full lockout at the top is the whole rep.",
+    cues: ["Upper back braced on the bench, chin tucked", "Drive through the heels to full hip extension", "Squeeze glutes hard at the top, don't hyperextend the low back"] },
+  { name: "Lat Pulldown", equipment: "Cable", muscles: "Back · Biceps", base: 140, video: "qaJhYsCkX2s",
+    blurb: "Builds pulling strength and back width for anyone not yet doing full pull-ups.",
+    cues: ["Grip just outside shoulder width", "Pull to your upper chest, lead with the elbows", "Control the bar back up — don't let it yank you"] },
+  { name: "Face Pull", equipment: "Cable", muscles: "Rear Delts · Upper Back", base: 45, video: "UMGpxwhsy_k",
+    blurb: "The best corrective move for rounded shoulders — high reps, light weight, done consistently.",
+    cues: ["Pull to your face, not your chest", "Elbows finish high, above shoulder height", "Externally rotate at the end — thumbs point back"] },
+  { name: "Hammer Curl", equipment: "Dumbbell", muscles: "Biceps · Forearms", base: 35, video: "8XLxfXROrTo",
+    blurb: "The neutral grip shifts work onto the brachialis and forearms for thicker-looking arms.",
+    cues: ["Palms face each other the whole rep", "Elbows stay pinned at your sides", "Curl and lower under control, no swinging"] },
+  { name: "Bulgarian Split Squat", equipment: "Dumbbell", muscles: "Quads · Glutes", base: 40, video: "HBYGeyb4sSM",
+    blurb: "Brutal single-leg work that builds strength and exposes imbalances a back squat hides.",
+    cues: ["Rear foot elevated, most of your weight on the front leg", "Drop straight down, front knee tracks over the toes", "Drive through the front heel to stand"] },
+  { name: "Leg Extension", equipment: "Machine", muscles: "Quads", base: 110, video: "m0FOpMEgero",
+    blurb: "Pure quad isolation — a good finisher after compound leg work, not a replacement for it.",
+    cues: ["Back flat against the pad", "Extend to full lockout, squeeze the quads", "Lower under control — don't let the stack drop"] },
+  { name: "Lying Leg Curl", equipment: "Machine", muscles: "Hamstrings", base: 90, video: "n5WDXD_mpVY",
+    blurb: "Isolates the hamstrings through knee flexion — complements the hip-hinge work RDLs and deadlifts do.",
+    cues: ["Hips stay flat on the pad", "Curl through a full range, squeeze at the top", "Lower slowly — don't let momentum take over"] },
+  { name: "Front Squat", equipment: "Barbell", muscles: "Quads · Core", base: 165, video: "G-Vamqoy8qM",
+    blurb: "The front-rack position forces an upright torso and hammers the quads harder than a back squat.",
+    cues: ["Elbows up, bar resting on your front delts", "Stay upright — the torso can't lean forward here", "Drive up through mid-foot, elbows stay high"] },
+  { name: "Overhead Press", equipment: "Barbell", muscles: "Shoulders · Triceps", base: 115, video: "_RlRDWO2jfg",
+    blurb: "The strict standing press — builds raw shoulder strength with no leg drive to cheat with.",
+    cues: ["Brace the core, squeeze the glutes", "Bar path stays close, just past your face", "Lock out overhead, head through at the top"] },
+  { name: "Dips", equipment: "Bodyweight", muscles: "Chest · Triceps", base: 0, video: "BRBVKxMb1RQ",
+    blurb: "A heavy bodyweight pressing move — lean forward for chest, stay upright for triceps.",
+    cues: ["Lean forward slightly to bias the chest", "Lower until upper arms are about parallel", "Press up without flaring the elbows wide"] },
+  { name: "Cable Chest Fly", equipment: "Cable", muscles: "Chest", base: 35, video: "HXVtFoExms0",
+    blurb: "Isolates the chest through a wide arc with constant tension a dumbbell fly can't match.",
+    cues: ["Slight bend in the elbows, hold it", "Bring hands together in front of your chest", "Control the stretch back — don't let the cables yank your arms"] },
+  { name: "Incline Bench Press", equipment: "Barbell", muscles: "Upper Chest · Shoulders", base: 155, video: "5kyLUGVq_pk",
+    blurb: "Builds the upper chest with heavier loading than dumbbells allow at the same incline.",
+    cues: ["Bench at 30–45°, don't go steeper", "Bar touches just below the collarbone", "Drive up and slightly back toward the rack"] },
+  { name: "Preacher Curl", equipment: "Barbell", muscles: "Biceps", base: 55, video: "sxA__DoLsgo",
+    blurb: "The pad locks out body english — pure bicep tension from a dead stop every rep.",
+    cues: ["Upper arms flat against the pad", "Lower all the way to a full stretch", "Curl without lifting off the pad"] },
+  { name: "Skull Crusher", equipment: "Barbell", muscles: "Triceps", base: 60, video: "OQ4TWXkZjTc",
+    blurb: "Loads the triceps heavy through a deep stretch — control the bar, this isn't the exercise to rush.",
+    cues: ["Elbows point at the ceiling, don't flare out", "Lower the bar to your forehead, not your chest", "Extend through the triceps, not the shoulders"] },
+  { name: "DB Lateral Raise", equipment: "Dumbbell", muscles: "Side Delts", base: 20, video: "3VcKaXpzqRo",
+    blurb: "The classic shoulder-width builder — light weight, strict form, no momentum.",
+    cues: ["Slight bend in the elbows, lead with them", "Raise to shoulder height, no higher", "Lower slowly — don't let gravity do the work"] },
+  { name: "Barbell Shrug", equipment: "Barbell", muscles: "Traps", base: 185, video: "KbsQ1E8Hg0o",
+    blurb: "Direct trap work — straight up and down, no rolling the shoulders.",
+    cues: ["Arms stay straight the whole rep", "Shrug straight up toward your ears", "Pause at the top, lower under control"] },
+  { name: "Cable Crunch", equipment: "Cable", muscles: "Abs", base: 70, video: "AV5PmZJIrrw",
+    blurb: "Lets you load the abs directly with weight instead of just bodyweight reps.",
+    cues: ["Kneel tall, rope at your ears", "Crunch by flexing the spine, not pulling with the arms", "Exhale hard at the bottom of each rep"] },
+  { name: "Hanging Leg Raise", equipment: "Bodyweight", muscles: "Abs · Hip Flexors", base: 0, video: "Pr1ieGZ5atk",
+    blurb: "Advanced core work that hits the lower abs harder than most floor exercises.",
+    cues: ["Dead hang, avoid swinging", "Raise legs by curling the pelvis, not just lifting the legs", "Lower under control — don't let momentum take over"] },
+  { name: "Farmer's Carry", equipment: "Dumbbell", muscles: "Grip · Core · Traps", base: 90, video: "Fkzk_RqlYig",
+    blurb: "Simple loaded carry that builds grip, core bracing, and trap strength all at once.",
+    cues: ["Stand tall, shoulders back, don't lean", "Grip hard the entire walk", "Take controlled steps — don't let the weight swing"] },
+  { name: "Box Jump", equipment: "Bodyweight", muscles: "Quads · Glutes · Power", base: 0, video: "Fk4KjYsLfSg",
+    blurb: "Trains explosive power — land soft and reset each rep instead of chaining reps fast.",
+    cues: ["Swing the arms to drive the jump", "Land soft with knees bent", "Step down — don't jump down off the box"] },
+  { name: "Arnold Press", equipment: "Dumbbell", muscles: "Shoulders", base: 45, video: "6Z15_WdXmVw",
+    blurb: "The rotation hits all three heads of the deltoid, not just the front like a standard press.",
+    cues: ["Start with palms facing you at shoulder height", "Rotate palms out as you press overhead", "Reverse the rotation on the way down"] },
+  { name: "Chest-Supported Row", equipment: "Machine", muscles: "Back · Biceps", base: 90, video: "0UBRfiO4zDs",
+    blurb: "The chest pad removes any momentum from the low back — pure, strict back tension.",
+    cues: ["Chest pinned to the pad the whole set", "Pull elbows back, squeeze the shoulder blades", "Control the weight back to a full stretch"] },
+];
+const VIDEO_IDS = Object.fromEntries(EX_LIB.map((e) => [e.name, e.video]));
+const EX_INFO = Object.fromEntries(EX_LIB.map((e) => [e.name, e]));
 
 // ---- Deterministic exercise history ----
 function exHistory(name) {
@@ -242,7 +365,7 @@ function buildSchedule() {
   });
   return map;
 }
-const EX_BASE = Object.fromEntries(sessionCycle.flatMap((c) => c.exs.map((e) => [e.n, e.base])));
+const EX_BASE = Object.fromEntries(EX_LIB.map((e) => [e.name, e.base]));
 const SCHEDULE = buildSchedule();
 
 // ---- History export (CSV) ----
@@ -294,7 +417,7 @@ function lastFor(name) {
 
 // ---- Readiness trend ----
 const READINESS_TODAY = 82;
-const readinessSeries = (() => {
+const readinessSeriesFor = (todayScore) => {
   const todayIso = iso(TODAY);
   const series = [];
   for (let o = -9; o <= 0; o++) {
@@ -302,22 +425,33 @@ const readinessSeries = (() => {
     const k = iso(d);
     const label = `${d.getMonth() + 1}/${d.getDate()}`;
     if (k === todayIso) {
-      series.push({ d: label, v: READINESS_TODAY, today: true });
+      series.push({ d: label, v: todayScore, today: true });
     } else {
       const e = SCHEDULE[k];
       if (e && e.readiness != null) series.push({ d: label, v: e.readiness });
     }
   }
   return series;
-})();
+};
 const longAvg = (() => {
   const vals = Object.values(SCHEDULE).filter((e) => e.readiness != null).map((e) => e.readiness);
   return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
 })();
-const recentAvg = (() => {
-  const last3 = readinessSeries.slice(-3);
+const recentAvgFor = (series) => {
+  const last3 = series.slice(-3);
   return Math.round(last3.reduce((s, p) => s + p.v, 0) / last3.length);
-})();
+};
+
+// ---- Onboarding readiness survey ----
+const SURVEY_QS = [
+  { key: "sleep",     label: "Sleep",     icon: Moon,     opts: ["Awful", "Poor", "Ok", "Good", "Excellent"] },
+  { key: "mood",      label: "Mood",      icon: Smile,    opts: ["Very poor", "A little off", "Ok", "Good", "Great!"] },
+  { key: "energy",    label: "Energy",    icon: Zap,      opts: ["Wiped out", "Tired", "Ok", "Good", "Amped up"] },
+  { key: "stress",    label: "Stress",    icon: Brain,    opts: ["Buried", "Strained", "Ok", "Not much", "Relaxed"] },
+  { key: "soreness",  label: "Soreness",  icon: Dumbbell, opts: ["Very sore", "Pretty sore", "Moderate", "Just a bit", "None at all"] },
+  { key: "hydration", label: "Hydration", icon: Droplets, opts: ["Parched", "Low", "Ok", "Good", "Topped up"] },
+];
+const SURVEY_COLORS = ["#EF1E19", "#F97316", "#F5A623", "#8BC34A", "#4FD8BC"]; // 1..5
 
 // ---- Bits ----
 const Label = ({ children }) => (
@@ -481,9 +615,28 @@ function loadFuelTargets() {
 }
 function saveFuelTargets(t) { localStorage.setItem("forge.fuelTargets", JSON.stringify(t)); }
 
+const PROGRAMS = [
+  { name: "40 Day Fitness",             meta: "40 days · 5 sessions/week",                     blurb: "Kyle's total-body reset. Show up, follow the day, get strong.", free: true },
+  { name: "Runner's Workout",           meta: "8 weeks · 4 runs + 2 lifts/week",               blurb: "Engine work plus the lifting that keeps runners durable.", price: "$29" },
+  { name: "Strength & Flexibility",     meta: "6 weeks · 3 lifts + 3 mobility days/week",      blurb: "Build strength without losing range of motion.", price: "$29" },
+  { name: "Kettlebell Engine",          meta: "4 weeks · 3 sessions/week",                     blurb: "One bell, big conditioning. Swings, carries, complexes.", price: "$19" },
+  { name: "One-on-One with Coach Kyle", meta: "Monthly · custom programming + weekly check-ins", blurb: "Direct line to Kyle. Your plan, adjusted every week.", price: "$149/mo" },
+];
+
 // ---- App ----
 export default function Forge() {
   const [screen, setScreen] = useState("login");
+  const [device, setDevice] = useState(() => localStorage.getItem("forge.device") || "");
+  const [pickingDevice, setPickingDevice] = useState(false);
+  const [survey, setSurvey] = useState({});
+  const [readyToday, setReadyToday] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(`forge.readiness.${iso(TODAY)}`));
+      return s?.score ?? READINESS_TODAY;
+    } catch { return READINESS_TODAY; }
+  });
+  const readinessSeries = useMemo(() => readinessSeriesFor(readyToday), [readyToday]);
+  const recentAvg = recentAvgFor(readinessSeries);
   const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
   const [active, setActive] = useState(null);        // { i, done }
@@ -498,6 +651,8 @@ export default function Forge() {
   const [line, setLine] = useState(null);
   const [exDetail, setExDetail] = useState(null);    // exercise name or null
   const [exTab, setExTab] = useState("history");
+  const [libQ, setLibQ] = useState("");
+  const [libEq, setLibEq] = useState("All");
   const [maxes, setMaxes] = useState({});
   const [removed, setRemoved] = useState({});   // {`${iso}:${letter}`: true} — deleted log rows            // name -> working max lb
   const [comments, setComments] = useState([]); // { text, ref, time }, ref: { name, date } | null
@@ -505,15 +660,14 @@ export default function Forge() {
   const [draft, setDraft] = useState("");
   const [voiceOn, setVoiceOn] = useState(true);
   const [talking, setTalking] = useState(false);
-  const [coach, setCoach] = useState(() => localStorage.getItem("forge.coach") || "Mike Torres");
+  const [coach, setCoach] = useState(() => {
+    const s = localStorage.getItem("forge.coach");
+    return s && s !== "Mike Torres" ? s : "Kyle";
+  });
   const [showSettings, setShowSettings] = useState(false);
-  const coachName = coach.trim() || "Mike Torres";
+  const coachName = coach.trim() || "Kyle";
   const coachFirst = coachName.split(/\s+/)[0];
   const coachInitial = coachFirst[0].toUpperCase();
-  const [voicePick, setVoicePick] = useState(() => {
-    const v = localStorage.getItem("forge.voice");
-    return EL_VOICES.some((x) => x.id === v) ? v : EL_VOICES[0].id;
-  });
   const [voiceStatus, setVoiceStatus] = useState(null);
   const audioRef = useRef(null);
   const ttsCache = useRef({});
@@ -549,12 +703,12 @@ export default function Forge() {
     if (audioRef.current) { try { audioRef.current.pause(); } catch (e) {} audioRef.current = null; }
     setTalking(false);
   };
-  const speak = async (text, overrideVoice) => {
+  const speak = async (text) => {
     setLine(text);
     if (!voiceOn) return;
     stopAudio();
     const spoken = speechify(text);
-    const vid = overrideVoice || voicePick;
+    const vid = KYLE_VOICE;
     try {
       const cacheKey = vid + "|" + spoken;
       let url = ttsCache.current[cacheKey];
@@ -575,12 +729,6 @@ export default function Forge() {
       await a.play();
       setVoiceStatus("ok");
     } catch (e) { setVoiceStatus("fail"); setTalking(false); }
-  };
-  const pickVoice = (id) => {
-    setVoicePick(id); setVoiceStatus(null);
-    localStorage.setItem("forge.voice", id);
-    const v = EL_VOICES.find((x) => x.id === id);
-    speak(`Hey Alex — I'm ${v.name}. Let's get after it.`, id);
   };
   useEffect(() => () => stopAudio(), []);
 
@@ -606,7 +754,7 @@ export default function Forge() {
 
   const openReadiness = () => {
     setShowReadiness(true);
-    speak(`Readiness ${READINESS_TODAY}. ${recentAvg >= longAvg ? "Trending above your baseline — green light to push." : "A touch under baseline — keep the top sets honest."}`);
+    speak(`Readiness ${readyToday}. ${recentAvg >= longAvg ? "Trending above your baseline — green light to push." : "A touch under baseline — keep the top sets honest."}`);
   };
 
   const openExercise = (name) => { setExDetail(name); setExTab("history"); };
@@ -768,7 +916,97 @@ export default function Forge() {
           </div>
           <input aria-label="Email" placeholder="Email" defaultValue="alex@email.com" style={inp} />
           <input aria-label="Password" placeholder="Password" type="password" defaultValue="••••••••" style={inp} />
-          <button onClick={() => setScreen("app")} style={{ ...btnP, width: "100%", marginTop: 6 }}>Sign in</button>
+
+          {device && !pickingDevice ? (
+            <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
+              <Watch size={16} color={C.recovery} />
+              <span style={{ color: C.body, fontSize: 13, flex: 1 }}>{device === "No device" ? "No device connected" : `${device} connected`}</span>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: device === "No device" ? C.muted : C.recovery }} />
+              <button onClick={() => setPickingDevice(true)} style={{ background: "none", border: "none", color: C.muted, fontSize: 12, textDecoration: "underline", padding: 0 }}>Change</button>
+            </div>
+          ) : (
+            <select
+              aria-label="Fitness device"
+              value={device}
+              onChange={(e) => { const v = e.target.value; localStorage.setItem("forge.device", v); setDevice(v); setPickingDevice(false); }}
+              style={{ ...inp, color: device ? C.text : C.muted }}
+            >
+              <option value="" disabled>Connect your fitness device…</option>
+              <option value="Samsung Galaxy Watch">Samsung Galaxy Watch</option>
+              <option value="Apple Watch">Apple Watch</option>
+              <option value="Garmin">Garmin</option>
+              <option value="Whoop">Whoop</option>
+              <option value="Fitbit">Fitbit</option>
+              <option value="Oura Ring">Oura Ring</option>
+              <option value="Polar">Polar</option>
+              <option value="No device">No device</option>
+            </select>
+          )}
+
+          <button onClick={() => { const todayKey = `forge.readiness.${iso(TODAY)}`; setScreen(localStorage.getItem(todayKey) ? "app" : "survey"); }} style={{ ...btnP, width: "100%", marginTop: 6 }}>Sign in</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Readiness survey ----
+  if (screen === "survey") {
+    const answered = Object.keys(survey).length;
+    const finishSurvey = () => {
+      const todayKey = `forge.readiness.${iso(TODAY)}`;
+      const sum = Object.values(survey).reduce((s, v) => s + v, 0);
+      const score = Math.round((sum / 30) * 100);           // 6 questions × max 5
+      localStorage.setItem(todayKey, JSON.stringify({ score, answers: survey }));
+      setReadyToday(score);
+      setScreen("app");
+      speak(`Readiness logged at ${score}. ${score >= 75 ? "Green light — we push today." : score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
+    };
+    return (
+      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", padding: 20, paddingBottom: 120, overflowY: "auto" }}>
+        <style>{css}</style>
+        <div style={{ width: "100%", maxWidth: 430 }}>
+          <h1 className="ff-d" style={{ fontSize: 34, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: 0 }}>Readiness Survey</h1>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: ".14em", textTransform: "uppercase", marginTop: 6 }}>Tell us how you feel</div>
+
+          {SURVEY_QS.map(({ key, label, icon: Icon, opts }) => (
+            <div key={key} style={{ marginTop: 26 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div className="ff-d" style={{ fontSize: 22, fontWeight: 700, color: C.text, textTransform: "uppercase" }}>{label}</div>
+                <Icon size={26} color={C.muted} strokeWidth={1.5} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginTop: 12 }}>
+                {opts.map((word, i) => {
+                  const v = i + 1;
+                  const selected = survey[key] === v;
+                  const color = SURVEY_COLORS[i];
+                  return (
+                    <button
+                      key={word}
+                      onClick={() => setSurvey((cur) => ({ ...cur, [key]: v }))}
+                      style={{
+                        display: "flex", flexDirection: "column", alignItems: "center",
+                        border: `1px solid ${selected ? color : C.lineStrong}`,
+                        background: selected ? "rgba(255,255,255,.04)" : "transparent",
+                        boxShadow: selected ? `inset 0 0 0 1px ${color}` : "none",
+                        borderRadius: 12, padding: "12px 2px", minHeight: 0,
+                      }}
+                    >
+                      <span className="ff-d" style={{ fontSize: 24, fontWeight: 800, color }}>{v}</span>
+                      <span style={{ fontSize: 9.5, color: selected ? C.text : C.muted, textAlign: "center", marginTop: 6 }}>{word}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+          <div style={{ maxWidth: 430, width: "100%", background: "rgba(13,15,20,.92)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.line}`, padding: "14px 20px calc(14px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <button onClick={() => setScreen("app")} style={{ background: "none", border: "none", color: C.muted, fontSize: 13 }}>Skip</button>
+            <div style={{ color: C.body, fontSize: 13 }}>Completed {answered} / 6</div>
+            <button onClick={finishSurvey} disabled={answered !== 6} style={{ ...btnP, padding: "0 22px", minHeight: 44, opacity: answered === 6 ? 1 : .45 }}>Finish</button>
+          </div>
         </div>
       </div>
     );
@@ -817,7 +1055,7 @@ export default function Forge() {
                     <Card role="button" tabIndex={0} aria-expanded={showReadiness} onClick={openReadiness}
                       onKeyDown={(e) => { if (e.key === "Enter") openReadiness(); }}
                       style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center", width: "100%", textAlign: "left" }}>
-                      <Ring score={82} />
+                      <Ring score={readyToday} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ color: C.text, fontSize: 15, fontWeight: 600 }}>Ready to push</div>
                         <div style={{ color: C.body, fontSize: 12.5, marginTop: 5, lineHeight: 1.55 }}>
@@ -1031,6 +1269,50 @@ export default function Forge() {
                   </button>
                 </Card>
               ))}
+
+              <Label>Exercise library</Label>
+              <div style={{ color: C.muted, fontSize: 11.5, marginTop: -6, marginBottom: 12 }}>50 exercises · tap for form video &amp; history</div>
+              <input aria-label="Search exercises" placeholder="Search exercises…" value={libQ}
+                onChange={(e) => setLibQ(e.target.value)} style={inp} />
+              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 12, scrollbarWidth: "none" }}>
+                {["All", "Barbell", "Dumbbell", "Kettlebell", "Cable", "Machine", "Bodyweight"].map((eq) => {
+                  const sel = libEq === eq;
+                  return (
+                    <button key={eq} onClick={() => setLibEq(eq)} aria-pressed={sel}
+                      style={{ flexShrink: 0, background: sel ? "rgba(239,30,25,.08)" : C.surface2,
+                        border: `1px solid ${sel ? "rgba(239,30,25,.55)" : C.line}`, borderRadius: 999,
+                        padding: "7px 13px", fontSize: 12, fontWeight: 600, color: sel ? C.energy : C.body, whiteSpace: "nowrap" }}>
+                      {eq}
+                    </button>
+                  );
+                })}
+              </div>
+              {(() => {
+                const q = libQ.trim().toLowerCase();
+                const filtered = EX_LIB
+                  .filter((e) => e.name.toLowerCase().includes(q) && (libEq === "All" || e.equipment === libEq))
+                  .sort((a, b) => a.name.localeCompare(b.name));
+                return (
+                  <Card style={{ padding: 0 }}>
+                    {filtered.length === 0 ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No exercises match.</div>
+                    ) : filtered.map((e, i) => (
+                      <div key={e.name} role="button" tabIndex={0}
+                        onClick={() => openExercise(e.name)}
+                        onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") openExercise(e.name); }}
+                        style={{ display: "flex", alignItems: "center", gap: 12, padding: 12,
+                          borderBottom: i < filtered.length - 1 ? `1px solid ${C.line}` : "none", cursor: "pointer" }}>
+                        <img src={`https://i.ytimg.com/vi/${e.video}/mqdefault.jpg`} alt="" width={56} height={32}
+                          style={{ borderRadius: 8, objectFit: "cover", flexShrink: 0, background: C.surface2 }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{e.name}</div>
+                          <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{e.muscles} · {e.equipment}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </Card>
+                );
+              })()}
             </div>
           )}
 
@@ -1453,37 +1735,64 @@ export default function Forge() {
                 <div style={{ ...ava, width: 50, height: 50, fontSize: 19 }}>{coachInitial}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
-                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · Ironworks Gym</div>
+                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · HARTWORK</div>
                 </div>
                 <Pill tone="recovery">Online</Pill>
               </Card>
-
-              <Label>Your coach's voice</Label>
-              <Card>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
-                  {EL_VOICES.map((v) => {
-                    const sel = voicePick === v.id;
-                    return (
-                      <div key={v.id} role="radio" aria-checked={sel} tabIndex={0}
-                        onClick={() => pickVoice(v.id)}
-                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickVoice(v.id); } }}
-                        style={{ position: "relative", background: sel ? "rgba(239,30,25,.08)" : C.surface2,
-                          border: `1px solid ${sel ? "rgba(239,30,25,.55)" : C.line}`, borderRadius: 14,
-                          padding: "12px 12px 10px", minHeight: 64 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
-                          <span style={{ fontSize: 14, fontWeight: 700, color: sel ? C.energy : C.text }}>{v.name}</span>
-                          <span style={{ fontSize: 9, color: C.muted, border: `1px solid ${C.line}`, borderRadius: 6, padding: "2px 5px" }}>{v.g}</span>
-                        </div>
-                        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4 }}>{v.tag}</div>
-                      </div>
-                    );
-                  })}
+              {voiceStatus === "fail" && (
+                <div style={{ color: C.muted, fontSize: 11, marginTop: 8 }}>
+                  Voice unavailable right now — coach will text instead.
                 </div>
-                {voiceStatus === "fail" && (
-                  <div style={{ color: C.muted, fontSize: 11, marginTop: 12 }}>
-                    Voice unavailable right now — coach will text instead.
+              )}
+
+              <Card
+                role="button"
+                aria-label="Play coach video (coming soon)"
+                onClick={() => {}}
+                style={{ marginTop: 14, padding: 0, cursor: "pointer" }}>
+                <div style={{ aspectRatio: "16 / 9", background: C.surface2, position: "relative", display: "flex",
+                  alignItems: "center", justifyContent: "center", borderRadius: "18px 18px 0 0", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", opacity: .12 }}>
+                    <HartMark size={90} />
                   </div>
-                )}
+                  <div style={{ position: "absolute", top: 10, left: 10, fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                    color: C.muted, background: "rgba(0,0,0,.35)", padding: "4px 8px", borderRadius: 6 }}>WEEKLY MESSAGE</div>
+                  <div style={{ width: 54, height: 54, borderRadius: "50%", background: C.energy, display: "flex", alignItems: "center",
+                    justifyContent: "center", boxShadow: "0 6px 18px rgba(239,30,25,.4)", position: "relative" }}>
+                    <Play size={22} color="#fff" fill="currentColor" />
+                  </div>
+                </div>
+                <div style={{ padding: "12px 16px" }}>
+                  <div style={{ color: C.text, fontSize: 14.5, fontWeight: 600 }}>A word from Coach Kyle</div>
+                  <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>This week's focus · 2:14</div>
+                </div>
+              </Card>
+
+              <Label>Programs</Label>
+              <Card style={{ padding: 0 }}>
+                {PROGRAMS.map((p, i) => (
+                  <div key={i}
+                    role={p.free ? "button" : undefined}
+                    tabIndex={p.free ? 0 : undefined}
+                    aria-disabled={p.free ? undefined : "true"}
+                    onClick={p.free ? () => {} : undefined}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
+                      borderBottom: i < PROGRAMS.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                    <div style={{ flex: 1, opacity: p.free ? 1 : .55 }}>
+                      <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{p.meta}</div>
+                      <div style={{ color: C.body, fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>{p.blurb}</div>
+                    </div>
+                    {p.free ? (
+                      <Pill tone="recovery">Included</Pill>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                        <div style={{ color: C.muted, fontSize: 11.5, fontWeight: 600 }}>{p.price}</div>
+                        <Lock size={15} color={C.muted} />
+                      </div>
+                    )}
+                  </div>
+                ))}
               </Card>
 
               <Label>Recent updates</Label>
@@ -1653,6 +1962,9 @@ export default function Forge() {
 
         {exDetail && (
           <Sheet title={exDetail} onClose={() => setExDetail(null)}>
+            {EX_INFO[exDetail] && (
+              <div style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{EX_INFO[exDetail].muscles} · {EX_INFO[exDetail].equipment}</div>
+            )}
             <div style={{ display: "flex", marginTop: 16, borderBottom: `1px solid ${C.line}` }}>
               <button onClick={() => setExTab("history")}
                 style={{ flex: 1, background: "none", border: "none", borderBottom: `2px solid ${exTab === "history" ? C.energy : "transparent"}`,
@@ -1698,13 +2010,17 @@ export default function Forge() {
 
             {exTab === "instruction" && (() => {
               const found = workout.exercises.find((e) => e.name === exDetail);
-              const cues = found ? found.cues : [
+              const info = EX_INFO[exDetail];
+              const cues = found ? found.cues : info?.cues ? info.cues : [
                 "Brace before every rep.",
                 "Control the negative — two seconds down.",
                 "Stop one rep before form breaks.",
               ];
               return (
                 <div style={{ marginTop: 16 }}>
+                  {info?.blurb && (
+                    <div style={{ color: C.body, fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>{info.blurb}</div>
+                  )}
                   {VIDEO_IDS[exDetail] && (
                     <>
                       <div style={{ position: "relative", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden",
@@ -1748,7 +2064,7 @@ export default function Forge() {
                 <div style={ava}>{coachInitial}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
-                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · Ironworks Gym</div>
+                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · HARTWORK</div>
                 </div>
               </Card>
             </div>

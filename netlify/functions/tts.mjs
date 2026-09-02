@@ -1,7 +1,4 @@
-const ALLOWED_VOICES = new Set([
-  "TxGEqnHWrfWFTfGW9XjX", "pNInz6obpgDQGcFmaJgB", "JBFqnCBsd6RMkjVDRZzb",
-  "21m00Tcm4TlvDq8ikWAM", "AZnzlk1XvdvUeBnXmlld", "XrExE9yKIg1WjnnlVkGX",
-]);
+const ALLOWED_VOICES = new Set(["ZAIovxRU9FXNYmauX8CL"]);
 const EL_ORIGIN = "https://api.elevenlabs.io";
 
 export default async (req) => {
