@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
-  ChevronDown, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
+  ChevronDown, ChevronRight, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
   Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings, Lock,
   Zap, Smile, Brain, Droplets
 } from "lucide-react";
@@ -623,6 +623,30 @@ const PROGRAMS = [
   { name: "One-on-One with Coach Kyle", meta: "Monthly · custom programming + weekly check-ins", blurb: "Direct line to Kyle. Your plan, adjusted every week.", price: "$149/mo" },
 ];
 
+const P40_TEMPLATES = [
+  { name: "Foundation Push", focus: "Chest · Shoulders · Triceps", exs: [
+    ["Barbell Bench Press", "4 × 6–8"], ["Incline DB Press", "3 × 10"], ["Seated DB Shoulder Press", "3 × 8–10"],
+    ["DB Lateral Raise", "3 × 12–15"], ["Triceps Pushdown", "3 × 12"], ["Push-Up Finisher", "1 × AMRAP"]] },
+  { name: "Foundation Pull", focus: "Back · Biceps", exs: [
+    ["Deadlift", "4 × 5"], ["Lat Pulldown", "3 × 10"], ["Barbell Row", "3 × 8"],
+    ["Face Pull", "3 × 15"], ["Hammer Curl", "3 × 12"]] },
+  { name: "Foundation Legs", focus: "Quads · Glutes · Hamstrings", exs: [
+    ["Back Squat", "4 × 6–8"], ["Romanian Deadlift", "3 × 8–10"], ["Walking Lunge", "3 × 12"],
+    ["Leg Extension", "3 × 12–15"], ["Standing Calf Raise", "4 × 15"]] },
+  { name: "Full Body Strength", focus: "Total body", exs: [
+    ["Front Squat", "4 × 6"], ["Overhead Press", "4 × 6–8"], ["Chest-Supported Row", "3 × 10"],
+    ["Barbell Hip Thrust", "3 × 8–10"], ["Plank Hold", "3 × 45s"]] },
+  { name: "Engine & Core", focus: "Conditioning · Core", exs: [
+    ["Kettlebell Swing", "5 × 15"], ["Goblet Squat", "3 × 12"], ["Farmer's Carry", "4 × 40yd"],
+    ["Cable Crunch", "3 × 15"], ["Rowing Sprint", "6 × 250m"]] },
+];
+const PROGRAM_40 = Array.from({ length: 40 }, (_, i) => {
+  const day = i + 1, wd = i % 7;               // wd 3 and 6 are rest days → 5 sessions/week
+  if (wd === 3 || wd === 6) return { day, rest: true };
+  const workoutIndex = i - Math.floor(i / 7) * 2 - (wd > 3 ? 1 : 0); // count of workout days before this one
+  return { day, ...P40_TEMPLATES[workoutIndex % 5] };
+});
+
 // ---- App ----
 export default function Forge() {
   const [screen, setScreen] = useState("login");
@@ -647,6 +671,8 @@ export default function Forge() {
   const [summary, setSummary] = useState(null);      // {sets, volume, minutes}
   const [doneToday, setDoneToday] = useState(false);
   const [showReadiness, setShowReadiness] = useState(false);
+  const [program40Open, setProgram40Open] = useState(false);
+  const [p40Day, setP40Day] = useState(null);   // expanded day number or null
   const [rpe, setRpe] = useState(null);
   const [line, setLine] = useState(null);
   const [exDetail, setExDetail] = useState(null);    // exercise name or null
@@ -1775,7 +1801,8 @@ export default function Forge() {
                     role={p.free ? "button" : undefined}
                     tabIndex={p.free ? 0 : undefined}
                     aria-disabled={p.free ? undefined : "true"}
-                    onClick={p.free ? () => {} : undefined}
+                    aria-expanded={p.free ? program40Open : undefined}
+                    onClick={p.free ? () => setProgram40Open(true) : undefined}
                     style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
                       borderBottom: i < PROGRAMS.length - 1 ? `1px solid ${C.line}` : "none" }}>
                     <div style={{ flex: 1, opacity: p.free ? 1 : .55 }}>
@@ -1784,7 +1811,10 @@ export default function Forge() {
                       <div style={{ color: C.body, fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>{p.blurb}</div>
                     </div>
                     {p.free ? (
-                      <Pill tone="recovery">Included</Pill>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                        <Pill tone="recovery">Included</Pill>
+                        <ChevronRight size={16} color={C.muted} />
+                      </div>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                         <div style={{ color: C.muted, fontSize: 11.5, fontWeight: 600 }}>{p.price}</div>
@@ -1957,6 +1987,69 @@ export default function Forge() {
             </div>
 
             <div style={{ color: C.muted, fontSize: 11.5, marginTop: 12 }}>Synced from Whoop &amp; Apple Watch · visible to Coach {coachFirst}</div>
+          </Sheet>
+        )}
+
+        {program40Open && (
+          <Sheet title="40 Day Fitness" onClose={() => { setProgram40Open(false); setP40Day(null); }}>
+            <div style={{ color: C.muted, fontSize: 12.5, marginTop: 8 }}>40 days · 5 sessions a week · Coach Kyle</div>
+            {Array.from({ length: 6 }, (_, w) => w).map((w) => {
+              const weekDays = PROGRAM_40.slice(w * 7, w * 7 + 7);
+              return (
+                <div key={w}>
+                  <Label>Week {w + 1}</Label>
+                  <Card style={{ padding: 0 }}>
+                    {weekDays.map((d, i) => {
+                      const isOpen = p40Day === d.day;
+                      return (
+                        <div key={d.day} style={{ borderBottom: i < weekDays.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                          <div
+                            role={d.rest ? undefined : "button"}
+                            tabIndex={d.rest ? undefined : 0}
+                            onClick={d.rest ? undefined : () => setP40Day(isOpen ? null : d.day)}
+                            style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", cursor: d.rest ? "default" : "pointer" }}>
+                            <div className="ff-d" style={{ fontSize: 13, fontWeight: 700, letterSpacing: ".06em", color: d.rest ? C.muted : C.energy, width: 56, flexShrink: 0 }}>
+                              DAY {d.day}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              {d.rest ? (
+                                <>
+                                  <div style={{ color: C.muted, fontSize: 14 }}>Rest</div>
+                                  <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>Recover. Walk, stretch, sleep.</div>
+                                </>
+                              ) : (
+                                <>
+                                  <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{d.name}</div>
+                                  <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{d.focus}</div>
+                                </>
+                              )}
+                            </div>
+                            {!d.rest && (
+                              <ChevronDown size={16} color={C.muted} style={{ transform: isOpen ? "none" : "rotate(-90deg)", flexShrink: 0, transition: "transform .15s" }} />
+                            )}
+                          </div>
+                          {!d.rest && isOpen && (
+                            <div style={{ padding: "0 16px 14px" }}>
+                              {d.exs.map(([name, target]) => (
+                                <div key={name} role="button" tabIndex={0}
+                                  onClick={() => openExercise(name)}
+                                  onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") openExercise(name); }}
+                                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
+                                  <img src={`https://i.ytimg.com/vi/${VIDEO_IDS[name]}/mqdefault.jpg`} alt="" width={44} height={26}
+                                    style={{ borderRadius: 6, objectFit: "cover", flexShrink: 0, background: C.surface2 }} />
+                                  <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600, flex: 1, minWidth: 0 }}>{name}</div>
+                                  <div style={{ color: C.muted, fontSize: 11.5, whiteSpace: "nowrap" }}>{target}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </Card>
+                </div>
+              );
+            })}
           </Sheet>
         )}
 
