@@ -13,7 +13,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const SEED_USERS = [
   { email: "hey@blueroutevineyard.com", name: "Sam", role: "user" },
-  { email: "kyle@alphaecho.io", name: "Kyle", role: "admin" },
+  { email: "hey+kyle@blueroutevineyard.com", name: "Kyle", role: "admin" },
 ];
 
 async function main() {

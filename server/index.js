@@ -1,5 +1,5 @@
-import express from "express";
 import pg from "pg";
+import { createApp } from "./app.js";
 
 const { Pool } = pg;
 
@@ -14,20 +14,18 @@ if (!port) {
   process.exit(1);
 }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-const app = express();
-
-app.get("/api/health", async (_req, res) => {
-  let db = false;
-  try {
-    await pool.query("SELECT 1");
-    db = true;
-  } catch (err) {
-    db = false;
+// Fail-fast at boot in production: RESEND_API_KEY must look like a Resend key.
+// Never print the value, only whether the format is valid.
+if (process.env.NODE_ENV === "production") {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey || !resendKey.startsWith("re_")) {
+    console.error("FATAL: RESEND_API_KEY invalid format");
+    process.exit(1);
   }
-  res.status(200).json({ ok: true, service: "workhart-api", db });
-});
+}
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const app = createApp(pool);
 
 app.listen(port, () => {
   console.log(`workhart-api listening on ${port}`);
