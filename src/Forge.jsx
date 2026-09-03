@@ -9,11 +9,11 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tool
 
 // ---- Tokens ----
 const C = {
-  bg: "#0D0F14", surface: "#151922", surface2: "#1C2230",
-  line: "#262E3D", lineStrong: "#38445A",
-  text: "#F1F3F7", body: "#C7CEDB", muted: "#8A93A6",
-  energy: "#EF1E19", energyDeep: "#B01310",
-  recovery: "#4FD8BC", inkOnEnergy: "#FFFFFF",
+  bg: "#0A0A0B", surface: "#141416", surface2: "#1B1B1F",
+  line: "#26262B", lineStrong: "#3B3B44",
+  text: "#F4F4F6", body: "#C9C9CF", muted: "#8C8C95",
+  energy: "#29ABE2", energyDeep: "#1B7FB2",
+  recovery: "#7ACBEF", inkOnEnergy: "#081C28",
 };
 
 const css = `
@@ -451,7 +451,7 @@ const SURVEY_QS = [
   { key: "soreness",  label: "Soreness",  icon: Dumbbell, opts: ["Very sore", "Pretty sore", "Moderate", "Just a bit", "None at all"] },
   { key: "hydration", label: "Hydration", icon: Droplets, opts: ["Parched", "Low", "Ok", "Good", "Topped up"] },
 ];
-const SURVEY_COLORS = ["#EF1E19", "#F97316", "#F5A623", "#8BC34A", "#4FD8BC"]; // 1..5
+const SURVEY_COLORS = ["#63636C", "#84848E", "#7FB6D6", "#4FBCEC", "#29ABE2"]; // 1..5
 
 // ---- Bits ----
 const Label = ({ children }) => (
@@ -462,7 +462,7 @@ const Card = ({ children, style, ...p }) => (
 );
 const Pill = ({ children, tone, style }) => (
   <span style={{ borderRadius: 999, padding: "5px 11px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
-    background: tone === "energy" ? "rgba(239,30,25,.13)" : "rgba(79,216,188,.12)",
+    background: tone === "energy" ? "rgba(41,171,226,.13)" : "rgba(122,203,239,.12)",
     color: tone === "energy" ? C.energy : C.recovery, ...style }}>{children}</span>
 );
 const Badge = ({ letter }) => (
@@ -479,7 +479,7 @@ const IconStat = ({ Icon, n, t }) => (
 
 function HartMark({ size = 30 }) {
   return (
-    <img src="/brand/hart_work_just_logo_dark.png" alt="" aria-hidden="true"
+    <img src="/brand/workhart_mark.png" alt="" aria-hidden="true"
       style={{ height: size, width: "auto", display: "block" }} />
   );
 }
@@ -537,7 +537,7 @@ function CalendarStrip({ selected, onSelect, doneToday, dotFor, labelFor }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 20px 8px" }}>
         <span className="ff-d" style={{ fontSize: 18, fontWeight: 700, color: C.text, letterSpacing: ".05em" }}>{fmtMonth(selDate)}</span>
         <button onClick={() => { onSelect(todayIso); scrollTo(todayIso); }}
-          style={{ background: "none", border: `1px solid ${selected === todayIso ? C.line : "rgba(239,30,25,.5)"}`, borderRadius: 8, padding: "5px 11px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: selected === todayIso ? C.muted : C.energy }}>
+          style={{ background: "none", border: `1px solid ${selected === todayIso ? C.line : "rgba(41,171,226,.5)"}`, borderRadius: 8, padding: "5px 11px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: selected === todayIso ? C.muted : C.energy }}>
           Today
         </button>
       </div>
@@ -938,7 +938,7 @@ export default function Forge() {
             <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <HartMark size={64} />
             </div>
-            <img src="/brand/hartwork_text_logo.png" alt="Hartwork" style={{ width: "min(100%, 406px)", height: "auto", display: "block", margin: "0 auto" }} />
+            <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ width: "min(100%, 406px)", height: "auto", display: "block", margin: "0 auto" }} />
           </div>
           <input aria-label="Email" placeholder="Email" defaultValue="alex@email.com" style={inp} />
           <input aria-label="Password" placeholder="Password" type="password" defaultValue="••••••••" style={inp} />
@@ -1028,7 +1028,7 @@ export default function Forge() {
         </div>
 
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
-          <div style={{ maxWidth: 430, width: "100%", background: "rgba(13,15,20,.92)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.line}`, padding: "14px 20px calc(14px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ maxWidth: 430, width: "100%", background: "rgba(10,10,11,.92)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.line}`, padding: "14px 20px calc(14px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
             <button onClick={() => setScreen("app")} style={{ background: "none", border: "none", color: C.muted, fontSize: 13 }}>Skip</button>
             <div style={{ color: C.body, fontSize: 13 }}>Completed {answered} / 6</div>
             <button onClick={finishSurvey} disabled={answered !== 6} style={{ ...btnP, padding: "0 22px", minHeight: 44, opacity: answered === 6 ? 1 : .45 }}>Finish</button>
@@ -1047,11 +1047,11 @@ export default function Forge() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
             <HartMark size={30} />
-            <img src="/brand/hartwork_text_logo.png" alt="Hartwork" style={{ height: 19, width: "auto", display: "block" }} />
+            <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ height: 19, width: "auto", display: "block" }} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn} aria-label={voiceOn ? "Turn coach voice off" : "Turn coach voice on"}
-              style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(239,30,25,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
+              style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: `1px solid ${voiceOn ? "rgba(41,171,226,.5)" : C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: voiceOn ? C.energy : C.muted }}>
               {voiceOn ? <Volume2 size={15} /> : <VolumeX size={15} />} Voice
             </button>
             <button onClick={() => setShowSettings(true)} aria-expanded={showSettings} aria-label="Settings"
@@ -1305,8 +1305,8 @@ export default function Forge() {
                   const sel = libEq === eq;
                   return (
                     <button key={eq} onClick={() => setLibEq(eq)} aria-pressed={sel}
-                      style={{ flexShrink: 0, background: sel ? "rgba(239,30,25,.08)" : C.surface2,
-                        border: `1px solid ${sel ? "rgba(239,30,25,.55)" : C.line}`, borderRadius: 999,
+                      style={{ flexShrink: 0, background: sel ? "rgba(41,171,226,.08)" : C.surface2,
+                        border: `1px solid ${sel ? "rgba(41,171,226,.55)" : C.line}`, borderRadius: 999,
                         padding: "7px 13px", fontSize: 12, fontWeight: 600, color: sel ? C.energy : C.body, whiteSpace: "nowrap" }}>
                       {eq}
                     </button>
@@ -1414,11 +1414,11 @@ export default function Forge() {
 
                 {/* Rest timer */}
                 {rest !== null && (
-                  <div style={{ margin: "14px auto 0", maxWidth: 330, borderRadius: 14, background: "rgba(79,216,188,.09)", border: "1px solid rgba(79,216,188,.3)", padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ margin: "14px auto 0", maxWidth: 330, borderRadius: 14, background: "rgba(122,203,239,.09)", border: "1px solid rgba(122,203,239,.3)", padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
                     <Timer size={17} color={C.recovery} />
                     <div style={{ flex: 1, textAlign: "left" }}>
                       <div style={{ color: C.recovery, fontSize: 13, fontWeight: 600 }}>Rest {Math.floor(rest / 60)}:{String(rest % 60).padStart(2, "0")}</div>
-                      <div style={{ height: 4, background: "rgba(79,216,188,.18)", borderRadius: 2, marginTop: 5, overflow: "hidden" }}>
+                      <div style={{ height: 4, background: "rgba(122,203,239,.18)", borderRadius: 2, marginTop: 5, overflow: "hidden" }}>
                         <div style={{ height: "100%", width: "100%", transform: `scaleX(${rest / 90})`, transformOrigin: "left", background: C.recovery, borderRadius: 2, transition: "transform 1s linear" }} />
                       </div>
                     </div>
@@ -1667,8 +1667,8 @@ export default function Forge() {
                       const sel = fuelGoal === g;
                       return (
                         <button key={g} onClick={() => setFuelGoal(g)} aria-pressed={sel}
-                          style={{ flex: 1, background: sel ? "rgba(239,30,25,.08)" : C.surface2,
-                            border: `1px solid ${sel ? "rgba(239,30,25,.55)" : C.line}`, borderRadius: 12,
+                          style={{ flex: 1, background: sel ? "rgba(41,171,226,.08)" : C.surface2,
+                            border: `1px solid ${sel ? "rgba(41,171,226,.55)" : C.line}`, borderRadius: 12,
                             padding: "10px 0", fontSize: 12.5, fontWeight: 600, color: sel ? C.energy : C.body, textTransform: "capitalize" }}>
                           {g}
                         </button>
@@ -1741,7 +1741,7 @@ export default function Forge() {
                   const blob = new Blob([csv], { type: "text/csv" });
                   const a = document.createElement("a");
                   a.href = URL.createObjectURL(blob);
-                  a.download = `hartwork-history-${iso(TODAY)}.csv`;
+                  a.download = `workhart-history-${iso(TODAY)}.csv`;
                   a.click();
                   URL.revokeObjectURL(a.href);
                 }}
@@ -1761,7 +1761,7 @@ export default function Forge() {
                 <div style={{ ...ava, width: 50, height: 50, fontSize: 19 }}>{coachInitial}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
-                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · HARTWORK</div>
+                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · WORKHART</div>
                 </div>
                 <Pill tone="recovery">Online</Pill>
               </Card>
@@ -1784,7 +1784,7 @@ export default function Forge() {
                   <div style={{ position: "absolute", top: 10, left: 10, fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
                     color: C.muted, background: "rgba(0,0,0,.35)", padding: "4px 8px", borderRadius: 6 }}>WEEKLY MESSAGE</div>
                   <div style={{ width: 54, height: 54, borderRadius: "50%", background: C.energy, display: "flex", alignItems: "center",
-                    justifyContent: "center", boxShadow: "0 6px 18px rgba(239,30,25,.4)", position: "relative" }}>
+                    justifyContent: "center", boxShadow: "0 6px 18px rgba(41,171,226,.4)", position: "relative" }}>
                     <Play size={22} color="#fff" fill="currentColor" />
                   </div>
                 </div>
@@ -1899,7 +1899,7 @@ export default function Forge() {
                       </div>
                       {dv.on
                         ? <button onClick={() => setDevs(devs.map((d, k) => k === i ? { ...d, on: false } : d))}
-                            style={{ borderRadius: 999, padding: "7px 13px", minHeight: 32, fontSize: 11.5, fontWeight: 600, background: "rgba(79,216,188,.12)", color: C.recovery, border: "1px solid transparent" }}>Connected</button>
+                            style={{ borderRadius: 999, padding: "7px 13px", minHeight: 32, fontSize: 11.5, fontWeight: 600, background: "rgba(122,203,239,.12)", color: C.recovery, border: "1px solid transparent" }}>Connected</button>
                         : <button onClick={() => setDevs(devs.map((d, k) => k === i ? { ...d, on: true } : d))}
                             style={{ borderRadius: 999, padding: "7px 13px", minHeight: 32, fontSize: 11.5, fontWeight: 600, background: "none", color: C.body, border: `1px solid ${C.lineStrong}` }}>Connect</button>}
                     </div>
@@ -1914,7 +1914,7 @@ export default function Forge() {
         </div>
 
         {/* Nav */}
-        <nav aria-label="Main" style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "rgba(13,15,20,.92)", backdropFilter: "blur(14px)", borderTop: `1px solid ${C.line}`, display: "flex", padding: "8px 8px calc(8px + env(safe-area-inset-bottom))" }}>
+        <nav aria-label="Main" style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "rgba(10,10,11,.92)", backdropFilter: "blur(14px)", borderTop: `1px solid ${C.line}`, display: "flex", padding: "8px 8px calc(8px + env(safe-area-inset-bottom))" }}>
           {[
             ["today", "Today", Home],
             ["train", "Train", Dumbbell],
@@ -2157,7 +2157,7 @@ export default function Forge() {
                 <div style={ava}>{coachInitial}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
-                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · HARTWORK</div>
+                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · WORKHART</div>
                 </div>
               </Card>
             </div>
@@ -2189,7 +2189,7 @@ const ava = {
 };
 function Stat({ n, t, hot }) {
   return (
-    <div style={{ flex: 1, background: C.surface, border: `1px solid ${hot ? "rgba(239,30,25,.45)" : C.line}`, borderRadius: 17, padding: "15px 10px", textAlign: "center" }}>
+    <div style={{ flex: 1, background: C.surface, border: `1px solid ${hot ? "rgba(41,171,226,.45)" : C.line}`, borderRadius: 17, padding: "15px 10px", textAlign: "center" }}>
       <div className="ff-d" style={{ fontSize: 31, fontWeight: 800, color: hot ? C.energy : C.text, lineHeight: 1 }}>{n}</div>
       <div style={{ fontSize: 9.5, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em", marginTop: 5, fontWeight: 600 }}>{t}</div>
     </div>
