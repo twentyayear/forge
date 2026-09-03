@@ -3,7 +3,6 @@ import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
   ChevronDown, ChevronRight, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
   Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings, Lock,
-  Zap, Smile, Brain, Droplets
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
 
@@ -442,16 +441,24 @@ const recentAvgFor = (series) => {
   return Math.round(last3.reduce((s, p) => s + p.v, 0) / last3.length);
 };
 
-// ---- Onboarding readiness survey ----
-const SURVEY_QS = [
-  { key: "sleep",     label: "Sleep",     icon: Moon,     opts: ["Awful", "Poor", "Ok", "Good", "Excellent"] },
-  { key: "mood",      label: "Mood",      icon: Smile,    opts: ["Very poor", "A little off", "Ok", "Good", "Great!"] },
-  { key: "energy",    label: "Energy",    icon: Zap,      opts: ["Wiped out", "Tired", "Ok", "Good", "Amped up"] },
-  { key: "stress",    label: "Stress",    icon: Brain,    opts: ["Buried", "Strained", "Ok", "Not much", "Relaxed"] },
-  { key: "soreness",  label: "Soreness",  icon: Dumbbell, opts: ["Very sore", "Pretty sore", "Moderate", "Just a bit", "None at all"] },
-  { key: "hydration", label: "Hydration", icon: Droplets, opts: ["Parched", "Low", "Ok", "Good", "Topped up"] },
+// ---- Morning check-in ----
+// 7 questions, 4 answers each; answer index IS its point value (0..3), max 21
+const CHECKIN_QS = [
+  { key: "hours",    q: "How much sleep did you get?",
+    opts: ["Under 5 hours", "5–6 hours", "6–7 hours", "7 or more"] },
+  { key: "sleep",    q: "How did you sleep?",
+    opts: ["Tossed and turned", "Woke up a few times", "Mostly solid", "Slept like a rock"] },
+  { key: "soreness", q: "How's your body feeling?",
+    opts: ["Beat up — everything aches", "Sore in a few spots", "A little stiff", "Fresh and loose"] },
+  { key: "energy",   q: "Where's your energy right now?",
+    opts: ["Running on empty", "Dragging a bit", "Steady", "Fully charged"] },
+  { key: "stress",   q: "How's your head?",
+    opts: ["Overloaded", "Carrying some stress", "Mostly clear", "Calm and focused"] },
+  { key: "fuel",     q: "How was your eating yesterday?",
+    opts: ["Barely ate, or all junk", "Hit and miss", "Pretty solid", "Dialed in"] },
+  { key: "drive",    q: "How much do you want to train today?",
+    opts: ["Not at all", "I'll show up", "Ready to work", "Can't wait"] },
 ];
-const SURVEY_COLORS = ["#63636C", "#84848E", "#7FB6D6", "#4FBCEC", "#29ABE2"]; // 1..5
 
 // ---- Bits ----
 const Label = ({ children }) => (
@@ -653,6 +660,7 @@ export default function Forge() {
   const [device, setDevice] = useState(() => localStorage.getItem("forge.device") || "");
   const [pickingDevice, setPickingDevice] = useState(false);
   const [survey, setSurvey] = useState({});
+  const [checkStep, setCheckStep] = useState(0);
   const [readyToday, setReadyToday] = useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem(`forge.readiness.${iso(TODAY)}`));
@@ -975,63 +983,66 @@ export default function Forge() {
     );
   }
 
-  // ---- Readiness survey ----
+  // ---- Morning check-in ----
   if (screen === "survey") {
-    const answered = Object.keys(survey).length;
-    const finishSurvey = () => {
+    const finishSurvey = (finalAnswers) => {
       const todayKey = `forge.readiness.${iso(TODAY)}`;
-      const sum = Object.values(survey).reduce((s, v) => s + v, 0);
-      const score = Math.round((sum / 30) * 100);           // 6 questions × max 5
-      localStorage.setItem(todayKey, JSON.stringify({ score, answers: survey }));
+      const sum = Object.values(finalAnswers).reduce((s, v) => s + v, 0);
+      const score = Math.round((sum / 21) * 100);
+      localStorage.setItem(todayKey, JSON.stringify({ score, answers: finalAnswers }));
       setReadyToday(score);
       setScreen("app");
       speak(`Readiness logged at ${score}. ${score >= 75 ? "Green light — we push today." : score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
     };
+    const q = CHECKIN_QS[checkStep];
+    const pick = (i) => {
+      const next = { ...survey, [q.key]: i };
+      setSurvey((cur) => ({ ...cur, [q.key]: i }));
+      setTimeout(() => {
+        if (checkStep < CHECKIN_QS.length - 1) setCheckStep(checkStep + 1);
+        else finishSurvey(next);
+      }, 180);
+    };
     return (
-      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", padding: 20, paddingBottom: 120, overflowY: "auto" }}>
+      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", padding: 20, overflowY: "auto" }}>
         <style>{css}</style>
-        <div style={{ width: "100%", maxWidth: 430 }}>
-          <h1 className="ff-d" style={{ fontSize: 34, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: 0 }}>Readiness Survey</h1>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: ".14em", textTransform: "uppercase", marginTop: 6 }}>Tell us how you feel</div>
-
-          {SURVEY_QS.map(({ key, label, icon: Icon, opts }) => (
-            <div key={key} style={{ marginTop: 26 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="ff-d" style={{ fontSize: 22, fontWeight: 700, color: C.text, textTransform: "uppercase" }}>{label}</div>
-                <Icon size={26} color={C.muted} strokeWidth={1.5} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginTop: 12 }}>
-                {opts.map((word, i) => {
-                  const v = i + 1;
-                  const selected = survey[key] === v;
-                  const color = SURVEY_COLORS[i];
-                  return (
-                    <button
-                      key={word}
-                      onClick={() => setSurvey((cur) => ({ ...cur, [key]: v }))}
-                      style={{
-                        display: "flex", flexDirection: "column", alignItems: "center",
-                        border: `1px solid ${selected ? color : C.lineStrong}`,
-                        background: selected ? "rgba(255,255,255,.04)" : "transparent",
-                        boxShadow: selected ? `inset 0 0 0 1px ${color}` : "none",
-                        borderRadius: 12, padding: "12px 2px", minHeight: 0,
-                      }}
-                    >
-                      <span className="ff-d" style={{ fontSize: 24, fontWeight: 800, color }}>{v}</span>
-                      <span style={{ fontSize: 9.5, color: selected ? C.text : C.muted, textAlign: "center", marginTop: 6 }}>{word}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
-          <div style={{ maxWidth: 430, width: "100%", background: "rgba(10,10,11,.92)", backdropFilter: "blur(8px)", borderTop: `1px solid ${C.line}`, padding: "14px 20px calc(14px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ width: "100%", maxWidth: 430, display: "flex", flexDirection: "column", flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="ff-b" style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: ".14em", textTransform: "uppercase" }}>Morning check-in</div>
             <button onClick={() => setScreen("app")} style={{ background: "none", border: "none", color: C.muted, fontSize: 13 }}>Skip</button>
-            <div style={{ color: C.body, fontSize: 13 }}>Completed {answered} / 6</div>
-            <button onClick={finishSurvey} disabled={answered !== 6} style={{ ...btnP, padding: "0 22px", minHeight: 44, opacity: answered === 6 ? 1 : .45 }}>Finish</button>
+          </div>
+          <div style={{ marginTop: 12, height: 3, width: "100%", background: C.line, borderRadius: 2 }}>
+            <div style={{ height: 3, width: "100%", transform: `scaleX(${checkStep / CHECKIN_QS.length})`, transformOrigin: "left", background: C.energy, borderRadius: 2, transition: "transform .25s ease" }} />
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", flex: 1, minHeight: "70vh" }}>
+            <div className="ff-b" style={{ fontSize: 11, fontWeight: 600, color: C.muted, letterSpacing: ".14em" }}>QUESTION {checkStep + 1} OF {CHECKIN_QS.length}</div>
+            <div className="ff-d" style={{ fontSize: 30, fontWeight: 700, color: C.text, lineHeight: 1.15, margin: "10px 0 26px" }}>{q.q}</div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {q.opts.map((word, i) => {
+                const selected = survey[q.key] === i;
+                return (
+                  <button
+                    key={word}
+                    onClick={() => pick(i)}
+                    style={{
+                      textAlign: "left", padding: "16px 18px", borderRadius: 14,
+                      fontSize: 15, fontWeight: 600,
+                      background: selected ? "rgba(41,171,226,.10)" : C.surface,
+                      border: `1px solid ${selected ? C.energy : C.line}`,
+                      color: selected ? C.text : C.body,
+                    }}
+                  >
+                    {word}
+                  </button>
+                );
+              })}
+            </div>
+
+            {checkStep > 0 && (
+              <button onClick={() => setCheckStep(checkStep - 1)} style={{ background: "none", border: "none", color: C.muted, fontSize: 13, marginTop: 20, alignSelf: "flex-start" }}>‹ Back</button>
+            )}
           </div>
         </div>
       </div>
