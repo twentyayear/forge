@@ -52,4 +52,5 @@ Then `ship-check` before any beta user beyond Sam.
 
 ### Position
 M0–M3 (prototype, 23 asks) live at workhart.netlify.app as of `c94ce0c` 2026-09-03.
-M4: **U0 GREEN 2026-09-03** (uncommitted) — alphaecho.io live over TLS, workhart-api + Postgres 16 up, `ops/deploy.sh` idempotent. Next: Sam commits, then Fable writes ask 25 (U1 schema).
+M4: **U0 GREEN 2026-09-03** (uncommitted) — alphaecho.io live over TLS, workhart-api + Postgres 16 up, `ops/deploy.sh` idempotent.
+M4: **U1 GREEN 2026-09-03** (uncommitted) — full schema (12 tables incl. `pgmigrations`) live via `node-pg-migrate` on `workhart`; idempotent seed (Sam user + Kyle admin); `workhart_test` DB + integrity tests (upsert, cross-tenant FK, cascade) all pass; `ops/deploy.sh` runs `migrate:up` before restart. Next: Sam commits, then Fable writes ask 26 (U2 auth + scoping).

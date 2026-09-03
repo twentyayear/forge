@@ -18,8 +18,8 @@ rsync -az --delete dist/ "$TARGET:/srv/workhart/web/"
 echo "==> [3/5] rsync server/ -> /srv/workhart/server"
 rsync -az --delete --exclude node_modules --exclude .env server/ "$TARGET:/srv/workhart/server/"
 
-echo "==> [4/5] remote: npm ci --omit=dev, restart workhart-api"
-ssh -o BatchMode=yes "$TARGET" 'set -e; cd /srv/workhart/server && npm ci --omit=dev && sudo systemctl restart workhart-api'
+echo "==> [4/5] remote: npm ci --omit=dev, migrate:up, restart workhart-api"
+ssh -o BatchMode=yes "$TARGET" 'set -e; cd /srv/workhart/server && npm ci --omit=dev && npm run migrate:up && sudo systemctl restart workhart-api'
 
 echo "==> [5/5] verify"
 sleep 1
