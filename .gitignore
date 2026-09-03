@@ -5,3 +5,7 @@ dist
 
 # Local Netlify folder
 .netlify
+
+# Backend server (ask 24)
+server/.env
+server/node_modules
