@@ -7,6 +7,7 @@ import express from "express";
 import { createAuthRouter } from "./auth.js";
 import { createScopedRouter } from "./routes.js";
 import { createDataRouter } from "./data.js";
+import { createMediaRouter } from "./media.js";
 
 export function createApp(pool) {
   const app = express();
@@ -38,6 +39,7 @@ export function createApp(pool) {
   app.use("/api/auth", createAuthRouter(pool));
   app.use("/api", createScopedRouter(pool));
   app.use("/api", createDataRouter(pool));
+  app.use("/api", createMediaRouter(pool));
 
   return app;
 }
