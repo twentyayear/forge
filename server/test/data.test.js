@@ -321,6 +321,33 @@ test("workout-log with another user's assignment_id -> 400 (composite FK), nothi
   assert.equal(after[0].n, before[0].n, "no workout_logs row inserted");
 });
 
+test("workout-log with a valid assignment_id marks that assignment completed", async () => {
+  const user = await makeUser("user", "assignComplete");
+  const assignmentId = await makeWorkoutAssignment(user);
+  const cookie = await signIn(user);
+
+  const { rows: before } = await pool.query(`SELECT status FROM workout_assignments WHERE id = $1`, [
+    assignmentId,
+  ]);
+  assert.equal(before[0].status, "assigned");
+
+  const res = await fetch(`${baseUrl}/api/workout-logs`, {
+    method: "POST",
+    headers: { ...authHeaders(cookie), "content-type": "application/json" },
+    body: JSON.stringify({
+      performed_at: "2026-09-05T10:00:00Z",
+      assignment_id: assignmentId,
+      sets: [{ exercise_key: "bench_press", set_no: 1, reps: 8, weight_lbs: 135 }],
+    }),
+  });
+  assert.equal(res.status, 201);
+
+  const { rows: after } = await pool.query(`SELECT status FROM workout_assignments WHERE id = $1`, [
+    assignmentId,
+  ]);
+  assert.equal(after[0].status, "completed");
+});
+
 test("profile PATCH merges fields across two calls, rejects unknown keys", async () => {
   const user = await makeUser("user", "profileMerge");
   const cookie = await signIn(user);

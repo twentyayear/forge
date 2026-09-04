@@ -672,6 +672,35 @@ function readinessSeriesForServer(checkinsMap, todayScore) {
   return series;
 }
 
+// Server-mode assignment -> engine shape. exercise_key IS the EX_LIB name
+// string (no separate key field) -- fall back gracefully when a key has no
+// EX_LIB match (custom/typo'd keys still render, just without cues/video).
+const FALLBACK_CUE = "Stay tight and control the tempo.";
+function activeWorkoutFromAssignment(w) {
+  const blocks = w.blocks || [];
+  const exercises = blocks.map((b) => {
+    const info = EX_INFO[b.exercise_key];
+    const maxReps = Math.max(...b.sets.map((s) => s.reps));
+    const firstWeight = b.sets[0]?.weight_lbs;
+    return {
+      name: b.exercise_key,
+      sets: b.sets.length,
+      reps: String(maxReps),
+      load: firstWeight != null ? `${firstWeight} lb` : "Bodyweight",
+      cues: info?.cues ?? [],
+      note: b.note,
+      setRows: b.sets.map((s) => ({ reps: s.reps, w: s.weight_lbs ?? 0, done: false })),
+      rest_sec: b.rest_sec ?? 90,
+    };
+  });
+  return {
+    name: w.title,
+    duration: `${exercises.length} exercise${exercises.length === 1 ? "" : "s"}`,
+    focus: w.notes || "",
+    exercises,
+  };
+}
+
 const PROGRAMS = [
   { name: "40 Day Fitness",             meta: "40 days · 5 sessions/week",                     blurb: "Kyle's total-body reset. Show up, follow the day, get strong.", free: true },
   { name: "Runner's Workout",           meta: "8 weeks · 4 runs + 2 lifts/week",               blurb: "Engine work plus the lifting that keeps runners durable.", price: "$29" },
@@ -716,7 +745,35 @@ export default function Forge() {
   const [writeError, setWriteError] = useState("");
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
   const [serverUser, setServerUser] = useState(null); // bootstrap `user` row (server mode)
+  const [serverAssignments, setServerAssignments] = useState([]); // bootstrap `assignments`
   const firstName = (SERVER_MODE && serverUser?.name ? serverUser.name : "Alex").split(" ")[0];
+  // Athlete-side assignment lookup + engine data (server mode only; prototype
+  // mode never populates serverAssignments, so activeWorkout === the mock).
+  const assignmentForDay = (dayIso) =>
+    serverAssignments.find((a) => dayKey(a.scheduled_for) === dayIso && a.status !== "skipped") || null;
+  const todayAssignment = SERVER_MODE ? assignmentForDay(iso(TODAY)) : null;
+  const activeWorkout = useMemo(
+    () => (SERVER_MODE && todayAssignment ? activeWorkoutFromAssignment(todayAssignment.workout) : workout),
+    [todayAssignment]
+  );
+  // ---- Console (admin, server mode) ----
+  const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder"
+  const [roster, setRoster] = useState([]);
+  const [rosterBusy, setRosterBusy] = useState(false);
+  const [rosterError, setRosterError] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [overview, setOverview] = useState(null);
+  const [overviewBusy, setOverviewBusy] = useState(false);
+  const [existingWorkouts, setExistingWorkouts] = useState([]);
+  const [builderMode, setBuilderMode] = useState("new"); // "new" | "existing"
+  const [builderTitle, setBuilderTitle] = useState("");
+  const [builderExercises, setBuilderExercises] = useState([]);
+  const [builderExistingId, setBuilderExistingId] = useState(null);
+  const [builderDate, setBuilderDate] = useState(() => iso(new Date(TODAY.getTime() + DAY_MS)));
+  const [builderLibQ, setBuilderLibQ] = useState("");
+  const [builderLibEq, setBuilderLibEq] = useState("All");
+  const [builderBusy, setBuilderBusy] = useState(false);
+  const [builderError, setBuilderError] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
@@ -841,6 +898,16 @@ export default function Forge() {
   const hydrateFromBootstrap = (data) => {
     const profile = data.profile || {};
     if (data.user) setServerUser(data.user);
+    if (data.user?.role === "admin") {
+      // Kyle doesn't train here -- land in the console instead of the
+      // athlete tabs; skip survey/import entirely.
+      setConsoleScreen("roster");
+      setSelectedUserId(null);
+      setOverview(null);
+      setScreen("console");
+      return;
+    }
+    setServerAssignments(data.assignments || []);
     setFuelLog(fuelRowsToLog(data.fuel || []));
     if (profile.fuelTargets && typeof profile.fuelTargets === "object") {
       setFuelTargets({ ...DEFAULT_FUEL_TARGETS, ...profile.fuelTargets });
@@ -894,10 +961,12 @@ export default function Forge() {
   // Initialize the set grid when the exercise changes; collapse the video
   useEffect(() => {
     if (active && grid[active.i] === undefined) {
-      const ex = workout.exercises[active.i];
-      const rows = Array.from({ length: ex.sets }, () => ({
-        reps: parseReps(ex.reps), w: parseWeight(ex.load) ?? 0, done: false,
-      }));
+      const ex = activeWorkout.exercises[active.i];
+      const rows = ex.setRows
+        ? ex.setRows.map((r) => ({ ...r }))
+        : Array.from({ length: ex.sets }, () => ({
+            reps: parseReps(ex.reps), w: parseWeight(ex.load) ?? 0, done: false,
+          }));
       setGrid((g) => ({ ...g, [active.i]: rows }));
     }
     setVideoOpen(false);
@@ -910,6 +979,135 @@ export default function Forge() {
     const t = setTimeout(() => setRest(rest - 1), 1000);
     return () => clearTimeout(t);
   }, [rest]);
+
+  // ---- Console (admin, server mode): data fetching ----
+  useEffect(() => {
+    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "roster") return;
+    let cancelled = false;
+    (async () => {
+      setRosterBusy(true); setRosterError("");
+      try {
+        const res = await apiCall("/api/admin/users");
+        if (cancelled) return;
+        if (res.status === 401) { setRosterBusy(false); return goSignedOut(); }
+        if (!res.ok) { setRosterError("Couldn't load the roster — try again."); setRosterBusy(false); return; }
+        const rows = await res.json();
+        if (cancelled) return;
+        setRoster(rows.filter((u) => u.role !== "admin"));
+        setRosterBusy(false);
+      } catch {
+        if (!cancelled) { setRosterError("Couldn't load the roster — try again."); setRosterBusy(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [screen, consoleScreen]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "dashboard" || !selectedUserId) return;
+    let cancelled = false;
+    (async () => {
+      setOverviewBusy(true);
+      try {
+        const res = await apiCall(`/api/admin/users/${selectedUserId}/overview`);
+        if (cancelled) return;
+        if (res.status === 401) { setOverviewBusy(false); return goSignedOut(); }
+        if (!res.ok) { setOverviewBusy(false); return; }
+        setOverview(await res.json());
+        setOverviewBusy(false);
+      } catch {
+        if (!cancelled) setOverviewBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [screen, consoleScreen, selectedUserId]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "builder") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiCall("/api/admin/workouts");
+        if (cancelled) return;
+        if (res.status === 401) return goSignedOut();
+        if (res.ok) setExistingWorkouts(await res.json());
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [screen, consoleScreen]); // eslint-disable-line
+
+  const openUserDashboard = (id) => { setSelectedUserId(id); setOverview(null); setConsoleScreen("dashboard"); };
+  const backToRoster = () => { setConsoleScreen("roster"); setSelectedUserId(null); setOverview(null); };
+  const openBuilder = () => {
+    setBuilderMode("new"); setBuilderTitle(""); setBuilderExercises([]); setBuilderExistingId(null);
+    setBuilderDate(iso(new Date(TODAY.getTime() + DAY_MS)));
+    setBuilderError(""); setBuilderLibQ(""); setBuilderLibEq("All");
+    setConsoleScreen("builder");
+  };
+  const backToDashboard = () => setConsoleScreen("dashboard");
+
+  const addBuilderExercise = (name) => {
+    setBuilderExercises((cur) => [...cur, { exercise_key: name, sets: [{ reps: 8, weight_lbs: "" }], rest_sec: "", note: "" }]);
+  };
+  const removeBuilderExercise = (i) => setBuilderExercises((cur) => cur.filter((_, k) => k !== i));
+  const updateBuilderExercise = (i, patch) => setBuilderExercises((cur) => cur.map((e, k) => (k === i ? { ...e, ...patch } : e)));
+  const addBuilderSet = (i) => setBuilderExercises((cur) => cur.map((e, k) => {
+    if (k !== i) return e;
+    const last = e.sets[e.sets.length - 1];
+    return { ...e, sets: [...e.sets, { ...last }] };
+  }));
+  const removeBuilderSet = (i) => setBuilderExercises((cur) => cur.map((e, k) => {
+    if (k !== i || e.sets.length <= 1) return e;
+    return { ...e, sets: e.sets.slice(0, -1) };
+  }));
+  const updateBuilderSet = (i, si, patch) => setBuilderExercises((cur) => cur.map((e, k) => {
+    if (k !== i) return e;
+    return { ...e, sets: e.sets.map((s, sk) => (sk === si ? { ...s, ...patch } : s)) };
+  }));
+
+  const submitAssignment = async () => {
+    setBuilderError(""); setBuilderBusy(true);
+    try {
+      let workoutId = builderExistingId;
+      if (builderMode === "new") {
+        if (!builderTitle.trim()) { setBuilderError("Give the workout a title."); setBuilderBusy(false); return; }
+        if (!builderExercises.length) { setBuilderError("Add at least one exercise."); setBuilderBusy(false); return; }
+        const blocks = builderExercises.map((e) => ({
+          exercise_key: e.exercise_key,
+          sets: e.sets.map((s) => ({
+            reps: Math.max(1, parseInt(s.reps, 10) || 1),
+            ...(s.weight_lbs !== "" && s.weight_lbs != null ? { weight_lbs: Number(s.weight_lbs) } : {}),
+          })),
+          ...(e.rest_sec !== "" && e.rest_sec != null ? { rest_sec: Number(e.rest_sec) } : {}),
+          ...(e.note && e.note.trim() ? { note: e.note.trim() } : {}),
+        }));
+        const wRes = await apiCall("/api/admin/workouts", {
+          method: "POST",
+          body: JSON.stringify({ title: builderTitle.trim(), blocks }),
+        });
+        if (wRes.status === 401) return goSignedOut();
+        if (!wRes.ok) { setBuilderError("Couldn't save the workout — check the exercises and try again."); setBuilderBusy(false); return; }
+        const w = await wRes.json();
+        workoutId = w.id;
+      }
+      if (!workoutId) { setBuilderError("Pick a workout first."); setBuilderBusy(false); return; }
+
+      const aRes = await apiCall("/api/admin/assignments", {
+        method: "POST",
+        body: JSON.stringify({ user_id: selectedUserId, workout_id: workoutId, scheduled_for: builderDate }),
+      });
+      if (aRes.status === 401) return goSignedOut();
+      if (aRes.status === 409) { setBuilderError("Already assigned that day."); setBuilderBusy(false); return; }
+      if (!aRes.ok) { setBuilderError("Couldn't create the assignment — try again."); setBuilderBusy(false); return; }
+
+      setBuilderBusy(false);
+      const oRes = await apiCall(`/api/admin/users/${selectedUserId}/overview`);
+      if (oRes.ok) setOverview(await oRes.json());
+      setConsoleScreen("dashboard");
+    } catch {
+      setBuilderError("Something went wrong — try again.");
+      setBuilderBusy(false);
+    }
+  };
 
   const openReadiness = () => {
     setShowReadiness(true);
@@ -1115,15 +1313,41 @@ export default function Forge() {
     setLog([]); setSummary(null); setRest(null); setRpe(null); setGrid({});
     startedAt.current = Date.now();
     setActive({ i: 0, done: 0 });
-    speak(`Welcome back, ${firstName}. Today is Push Day A. Warm up well — then we get after it.`);
+    speak(`Welcome back, ${firstName}. Today is ${activeWorkout.name}. Warm up well — then we get after it.`);
   };
 
-  const finish = (finalLog) => {
+  const finish = async (finalLog) => {
     const mins = Math.max(1, Math.round((Date.now() - startedAt.current) / 60000));
     const volume = finalLog.reduce((s, l) => s + (l.w || 0) * l.reps, 0);
     setSummary({ sets: finalLog.length, volume, minutes: mins });
     setActive(null); setRest(null); setDoneToday(true);
     speak(`Workout complete. Outstanding session — Coach ${coachFirst} will see today's numbers tonight.`);
+
+    if (SERVER_MODE) {
+      const perExerciseCount = {};
+      const sets = finalLog.map((l) => {
+        const setNo = (perExerciseCount[l.i] = (perExerciseCount[l.i] || 0) + 1);
+        const ex = activeWorkout.exercises[l.i];
+        return { exercise_key: ex.name, set_no: setNo, reps: l.reps, weight_lbs: l.w };
+      });
+      try {
+        const res = await apiCall("/api/workout-logs", {
+          method: "POST",
+          body: JSON.stringify({
+            performed_at: new Date().toISOString(),
+            assignment_id: todayAssignment?.id,
+            notes: rpe ? `Session RPE: ${rpe}` : undefined,
+            sets,
+          }),
+        });
+        if (res.status === 401) return goSignedOut();
+        if (!res.ok) { setWriteError("Couldn't save that workout — your summary is still here."); return; }
+        setWriteError("");
+        await refetchBootstrap();
+      } catch {
+        setWriteError("Couldn't save that workout — your summary is still here.");
+      }
+    }
   };
 
   const updateRow = (k, patch) => {
@@ -1143,7 +1367,7 @@ export default function Forge() {
     setGrid({ ...grid, [active.i]: rows.slice(0, -1) });
   };
   const checkRow = (k) => {
-    const ex = workout.exercises[active.i];
+    const ex = activeWorkout.exercises[active.i];
     const bw = parseWeight(ex.load) === null;
     const rows = grid[active.i];
     const row = rows[k];
@@ -1153,14 +1377,14 @@ export default function Forge() {
       const newLog = [...log, { i: active.i, w: bw ? 0 : row.w, reps: row.reps }];
       setLog(newLog);
       if (newRows.every((r) => r.done)) {
-        if (active.i + 1 >= workout.exercises.length) { finish(newLog); return; }
-        const nx = workout.exercises[active.i + 1];
+        if (active.i + 1 >= activeWorkout.exercises.length) { finish(newLog); return; }
+        const nx = activeWorkout.exercises[active.i + 1];
         setActive({ i: active.i + 1, done: 0 });
-        setRest(90);
-        speak(`Nice work. Next up: ${nx.name}. ${nx.cues[0]}.`);
+        setRest(ex.rest_sec ?? 90);
+        speak(`Nice work. Next up: ${nx.name}. ${nx.cues[0] ?? FALLBACK_CUE}.`);
       } else {
         setActive({ ...active, done: newRows.filter((r) => r.done).length });
-        setRest(90);
+        setRest(ex.rest_sec ?? 90);
         speak(cheers[idx.current++ % cheers.length]);
       }
     } else {
@@ -1402,6 +1626,321 @@ export default function Forge() {
     );
   }
 
+  // ---- Console (admin, server mode): Kyle doesn't train here ----
+  if (screen === "console") {
+    return (
+      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", justifyContent: "center" }}>
+        <style>{css}</style>
+        <div style={{ width: "100%", maxWidth: 430, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <HartMark size={30} />
+              <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ height: 19, width: "auto", display: "block" }} />
+            </div>
+            <button onClick={handleSignOut}
+              style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 999, padding: "8px 13px", minHeight: 38, fontSize: 12, fontWeight: 600, color: C.muted }}>
+              Sign out
+            </button>
+          </div>
+
+          {writeError && (
+            <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
+          )}
+
+          <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px" }}>
+
+            {/* ROSTER */}
+            {consoleScreen === "roster" && (
+              <div>
+                <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>Roster</h1>
+                <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 16px" }}>{roster.length} athlete{roster.length === 1 ? "" : "s"}</div>
+                {rosterError && <div style={{ color: C.energy, fontSize: 12.5, marginBottom: 12 }}>{rosterError}</div>}
+                {rosterBusy ? (
+                  <div style={{ color: C.muted, fontSize: 13 }}>Loading…</div>
+                ) : (
+                  <Card style={{ padding: 0 }}>
+                    {roster.length === 0 ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No athletes yet.</div>
+                    ) : roster.map((u, i) => (
+                      <button key={u.id} onClick={() => openUserDashboard(u.id)}
+                        style={{ width: "100%", background: "none", border: "none", textAlign: "left", padding: 16,
+                          display: "flex", alignItems: "center", gap: 12,
+                          borderBottom: i < roster.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                        <div style={ava}>{(u.name || u.email)[0].toUpperCase()}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: C.text, fontSize: 14.5, fontWeight: 600 }}>{u.name}</div>
+                          <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{u.email}</div>
+                          <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>
+                            {u.last_checkin ? `Last check-in ${dayKey(u.last_checkin)}` : "No check-ins yet"} · {u.assignment_count} assignment{u.assignment_count === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        <ChevronRight size={16} color={C.muted} />
+                      </button>
+                    ))}
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {/* USER DASHBOARD */}
+            {consoleScreen === "dashboard" && (
+              <div>
+                <button onClick={backToRoster}
+                  style={{ background: "none", border: "none", color: C.muted, fontSize: 13, padding: "8px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                  <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Back to roster
+                </button>
+                {overviewBusy || !overview ? (
+                  <div style={{ color: C.muted, fontSize: 13, marginTop: 12 }}>Loading…</div>
+                ) : (() => {
+                  const u = overview.user;
+                  const checkinSeries = overview.checkins.map((c) => ({ d: dayKey(c.day).slice(5), v: c.score }));
+                  const fuelTotalsByDay = {};
+                  for (const r of overview.fuel) {
+                    const day = dayKey(r.eaten_on);
+                    const t = fuelTotalsByDay[day] ?? { kcal: 0, protein: 0 };
+                    t.kcal += r.calories || 0; t.protein += r.protein_g || 0;
+                    fuelTotalsByDay[day] = t;
+                  }
+                  const fuelDays = Object.keys(fuelTotalsByDay).sort().reverse().slice(0, 7);
+                  const todayIsoC = iso(TODAY);
+                  const upcoming = overview.assignments
+                    .filter((a) => dayKey(a.scheduled_for) >= todayIsoC)
+                    .sort((a, b) => dayKey(a.scheduled_for).localeCompare(dayKey(b.scheduled_for)));
+
+                  return (
+                    <>
+                      <h1 className="ff-d" style={{ fontSize: 30, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "10px 0 0", lineHeight: 1.05 }}>{u.name}</h1>
+                      <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{u.email}</div>
+
+                      <Label>Readiness trend</Label>
+                      <Card>
+                        {checkinSeries.length === 0 ? (
+                          <div style={{ color: C.muted, fontSize: 12.5 }}>No check-ins yet.</div>
+                        ) : (
+                          <div style={{ height: 158 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={checkinSeries} margin={{ top: 8, right: 8, left: -22, bottom: 0 }}>
+                                <CartesianGrid stroke={C.line} strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="d" stroke={C.muted} fontSize={11} tickLine={false} axisLine={false} />
+                                <YAxis stroke={C.muted} fontSize={11} tickLine={false} axisLine={false} domain={[0, 100]} />
+                                <Tooltip contentStyle={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, color: C.text, fontSize: 12 }} />
+                                <Line type="monotone" dataKey="v" stroke={C.energy} strokeWidth={2.5} dot={{ r: 3, fill: C.energy, strokeWidth: 0 }} isAnimationActive={false} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </Card>
+
+                      <Label>Upcoming assignments</Label>
+                      <Card style={{ padding: 0 }}>
+                        {upcoming.length === 0 ? (
+                          <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>Nothing scheduled.</div>
+                        ) : upcoming.map((a, i) => (
+                          <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: i < upcoming.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                            <div>
+                              <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{a.workout.title}</div>
+                              <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{dayKey(a.scheduled_for)}</div>
+                            </div>
+                            <Pill tone={a.status === "completed" ? "recovery" : "energy"}>{a.status}</Pill>
+                          </div>
+                        ))}
+                      </Card>
+
+                      <Label>Recent workout logs</Label>
+                      <Card style={{ padding: 0 }}>
+                        {overview.workoutLogs.length === 0 ? (
+                          <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No logged workouts yet.</div>
+                        ) : overview.workoutLogs.map((l, i) => {
+                          const a = l.assignment_id ? overview.assignments.find((x) => x.id === l.assignment_id) : null;
+                          return (
+                            <div key={l.id} style={{ padding: "12px 16px", borderBottom: i < overview.workoutLogs.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                              <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{a?.workout?.title ?? "Freeform workout"}</div>
+                              <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{dayKey(l.performed_at)} · {l.sets.length} set{l.sets.length === 1 ? "" : "s"}</div>
+                            </div>
+                          );
+                        })}
+                      </Card>
+
+                      <Label>Recent fuel</Label>
+                      <Card style={{ padding: 0 }}>
+                        {fuelDays.length === 0 ? (
+                          <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No fuel logged yet.</div>
+                        ) : fuelDays.map((day, i) => (
+                          <div key={day} style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderBottom: i < fuelDays.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                            <div style={{ color: C.body, fontSize: 13 }}>{day}</div>
+                            <div style={{ color: C.muted, fontSize: 12.5 }}>{Math.round(fuelTotalsByDay[day].kcal)} kcal · {Math.round(fuelTotalsByDay[day].protein)}g protein</div>
+                          </div>
+                        ))}
+                      </Card>
+
+                      <button onClick={openBuilder} style={{ ...btnP, width: "100%", marginTop: 16 }}>Assign a workout</button>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* WORKOUT BUILDER */}
+            {consoleScreen === "builder" && (
+              <div>
+                <button onClick={backToDashboard}
+                  style={{ background: "none", border: "none", color: C.muted, fontSize: 13, padding: "8px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                  <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Back to dashboard
+                </button>
+                <h1 className="ff-d" style={{ fontSize: 28, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "8px 0 0" }}>Assign a workout</h1>
+                <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{overview?.user?.name}</div>
+
+                <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                  {["new", "existing"].map((m) => {
+                    const sel = builderMode === m;
+                    return (
+                      <button key={m} onClick={() => setBuilderMode(m)} aria-pressed={sel}
+                        style={{ flex: 1, background: sel ? "rgba(41,171,226,.08)" : C.surface2,
+                          border: `1px solid ${sel ? "rgba(41,171,226,.55)" : C.line}`, borderRadius: 12,
+                          padding: "10px 0", fontSize: 12.5, fontWeight: 600, color: sel ? C.energy : C.body }}>
+                        {m === "new" ? "Build new" : "Use existing"}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {builderMode === "existing" ? (
+                  <Card style={{ marginTop: 14, padding: 0 }}>
+                    {existingWorkouts.length === 0 ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No saved workouts yet — build one instead.</div>
+                    ) : existingWorkouts.map((w, i) => {
+                      const sel = builderExistingId === w.id;
+                      return (
+                        <button key={w.id} onClick={() => setBuilderExistingId(w.id)} aria-pressed={sel}
+                          style={{ width: "100%", textAlign: "left", background: sel ? "rgba(41,171,226,.08)" : "none", border: "none",
+                            padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center",
+                            borderBottom: i < existingWorkouts.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                          <div>
+                            <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{w.title}</div>
+                            <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{(w.blocks || []).length} exercises</div>
+                          </div>
+                          {sel && <Check size={16} color={C.energy} />}
+                        </button>
+                      );
+                    })}
+                  </Card>
+                ) : (
+                  <>
+                    <Label>Title</Label>
+                    <input aria-label="Workout title" placeholder="e.g. Push Day — Week 3" value={builderTitle}
+                      onChange={(e) => setBuilderTitle(e.target.value)} style={inp} />
+
+                    <Label>Exercises</Label>
+                    {builderExercises.map((e, i) => (
+                      <Card key={i} style={{ marginTop: i === 0 ? 0 : 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{e.exercise_key}</div>
+                          <button aria-label={`Remove ${e.exercise_key}`} onClick={() => removeBuilderExercise(i)}
+                            style={{ background: "none", border: "none", color: C.muted, display: "flex" }}>
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <div style={{ width: 28, fontSize: 9.5, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Set</div>
+                            <div style={{ flex: 1, textAlign: "center", fontSize: 9.5, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Reps</div>
+                            <div style={{ flex: 1, textAlign: "center", fontSize: 9.5, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Lb</div>
+                          </div>
+                          {e.sets.map((s, si) => (
+                            <div key={si} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                              <div className="ff-d" style={{ width: 28, fontSize: 13, fontWeight: 700, color: C.muted }}>{si + 1}</div>
+                              <input type="number" inputMode="numeric" aria-label={`Exercise ${i + 1} set ${si + 1} reps`} value={s.reps}
+                                onChange={(ev) => updateBuilderSet(i, si, { reps: ev.target.value })}
+                                style={{ flex: 1, textAlign: "center", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, minHeight: 40, fontSize: 15, fontWeight: 700, color: C.text }} />
+                              <input type="number" inputMode="numeric" aria-label={`Exercise ${i + 1} set ${si + 1} weight`} placeholder="BW" value={s.weight_lbs}
+                                onChange={(ev) => updateBuilderSet(i, si, { weight_lbs: ev.target.value })}
+                                style={{ flex: 1, textAlign: "center", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, minHeight: 40, fontSize: 15, fontWeight: 700, color: C.text }} />
+                            </div>
+                          ))}
+                          <div style={{ display: "flex", gap: 14, justifyContent: "center", alignItems: "center", marginTop: 10 }}>
+                            <button aria-label={`Remove a set from ${e.exercise_key}`} onClick={() => removeBuilderSet(i)}
+                              style={{ width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.lineStrong}`, background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <Minus size={14} color={C.body} />
+                            </button>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" }}>Set</span>
+                            <button aria-label={`Add a set to ${e.exercise_key}`} onClick={() => addBuilderSet(i)}
+                              style={{ width: 32, height: 32, borderRadius: "50%", border: `1px solid ${C.lineStrong}`, background: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <Plus size={14} color={C.body} />
+                            </button>
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+                          <input aria-label={`${e.exercise_key} rest seconds`} type="number" inputMode="numeric" placeholder="Rest (sec)" value={e.rest_sec}
+                            onChange={(ev) => updateBuilderExercise(i, { rest_sec: ev.target.value })}
+                            style={{ ...inp, marginBottom: 0 }} />
+                          <input aria-label={`${e.exercise_key} note`} placeholder="Note (optional)" value={e.note}
+                            onChange={(ev) => updateBuilderExercise(i, { note: ev.target.value })}
+                            style={{ ...inp, marginBottom: 0 }} />
+                        </div>
+                      </Card>
+                    ))}
+
+                    <Label>Add from library</Label>
+                    <input aria-label="Search exercises" placeholder="Search exercises…" value={builderLibQ}
+                      onChange={(e) => setBuilderLibQ(e.target.value)} style={inp} />
+                    <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 12, scrollbarWidth: "none" }}>
+                      {["All", "Barbell", "Dumbbell", "Kettlebell", "Cable", "Machine", "Bodyweight"].map((eq) => {
+                        const sel = builderLibEq === eq;
+                        return (
+                          <button key={eq} onClick={() => setBuilderLibEq(eq)} aria-pressed={sel}
+                            style={{ flexShrink: 0, background: sel ? "rgba(41,171,226,.08)" : C.surface2,
+                              border: `1px solid ${sel ? "rgba(41,171,226,.55)" : C.line}`, borderRadius: 999,
+                              padding: "7px 13px", fontSize: 12, fontWeight: 600, color: sel ? C.energy : C.body, whiteSpace: "nowrap" }}>
+                            {eq}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {(() => {
+                      const q = builderLibQ.trim().toLowerCase();
+                      const filtered = EX_LIB
+                        .filter((e) => e.name.toLowerCase().includes(q) && (builderLibEq === "All" || e.equipment === builderLibEq))
+                        .sort((a, b) => a.name.localeCompare(b.name));
+                      return (
+                        <Card style={{ padding: 0 }}>
+                          {filtered.length === 0 ? (
+                            <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No exercises match.</div>
+                          ) : filtered.map((e, i) => (
+                            <button key={e.name} onClick={() => addBuilderExercise(e.name)}
+                              style={{ width: "100%", textAlign: "left", background: "none", border: "none", display: "flex", alignItems: "center", gap: 12, padding: 12,
+                                borderBottom: i < filtered.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                              <img src={`https://i.ytimg.com/vi/${e.video}/mqdefault.jpg`} alt="" width={56} height={32}
+                                style={{ borderRadius: 8, objectFit: "cover", flexShrink: 0, background: C.surface2 }} />
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{e.name}</div>
+                                <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{e.muscles} · {e.equipment}</div>
+                              </div>
+                              <Plus size={16} color={C.energy} />
+                            </button>
+                          ))}
+                        </Card>
+                      );
+                    })()}
+                  </>
+                )}
+
+                <Label>Date</Label>
+                <input aria-label="Assignment date" type="date" value={builderDate}
+                  onChange={(e) => setBuilderDate(e.target.value)}
+                  style={inp} />
+
+                {builderError && <div style={{ color: C.energy, fontSize: 12.5, marginTop: 4 }}>{builderError}</div>}
+                <button onClick={submitAssignment} disabled={builderBusy} style={{ ...btnP, width: "100%", marginTop: 14, opacity: builderBusy ? .6 : 1 }}>
+                  {builderBusy ? "Assigning…" : "Assign workout"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ---- Shell ----
   return (
     <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", justifyContent: "center" }}>
@@ -1436,6 +1975,83 @@ export default function Forge() {
             const todayIso = iso(TODAY);
             const isToday = selDay === todayIso;
             const selDate = new Date(selDay + "T00:00:00");
+
+            if (SERVER_MODE) {
+              const dayAssignment = assignmentForDay(selDay);
+              const isDayDone = dayAssignment?.status === "completed" || (isToday && doneToday);
+              const exCount = dayAssignment ? dayAssignment.workout.blocks.length : 0;
+              const dotFor = (k) => {
+                const a = assignmentForDay(k);
+                if (!a) return null;
+                return a.status === "completed" ? C.recovery : C.energy;
+              };
+              const labelFor = (k, d) => {
+                const a = assignmentForDay(k);
+                return `${fmtLong(d)}${a ? ` — ${a.workout.title}${a.status === "completed" ? ", completed" : ", planned"}` : ", no session"}`;
+              };
+              return (
+                <div>
+                  <CalendarStrip selected={selDay} onSelect={setSelDay} doneToday={doneToday} dotFor={dotFor} labelFor={labelFor} />
+                  <div style={{ color: C.muted, fontSize: 13, marginTop: 14 }}>{fmtLong(selDate)}</div>
+
+                  {isToday ? (
+                    <>
+                      <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Morning, {firstName}</h1>
+
+                      <Card role="button" tabIndex={0} aria-expanded={showReadiness} onClick={openReadiness}
+                        onKeyDown={(e) => { if (e.key === "Enter") openReadiness(); }}
+                        style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center", width: "100%", textAlign: "left" }}>
+                        <Ring score={readyToday} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: C.text, fontSize: 15, fontWeight: 600 }}>Ready to push</div>
+                          <div style={{ color: C.body, fontSize: 12.5, marginTop: 5, lineHeight: 1.55 }}>
+                            Check-in logged this morning.
+                          </div>
+                          <div style={{ color: C.muted, fontSize: 11, marginTop: 6 }}>View trend ›</div>
+                        </div>
+                      </Card>
+                    </>
+                  ) : (
+                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>
+                      {dayAssignment ? dayAssignment.workout.title : "No Session"}
+                    </h1>
+                  )}
+
+                  <Label>{isToday ? "Today's session" : "Scheduled session"}</Label>
+                  {dayAssignment ? (
+                    <Card>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                        <div>
+                          <div className="ff-d" style={{ fontSize: 27, fontWeight: 700, color: C.text, textTransform: "uppercase", lineHeight: 1 }}>{dayAssignment.workout.title}</div>
+                          <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{exCount} exercise{exCount === 1 ? "" : "s"}</div>
+                        </div>
+                        {isDayDone ? <Pill tone="recovery">Completed</Pill> : <Pill tone="energy">Planned</Pill>}
+                      </div>
+                      {isDayDone && isToday && summary && (
+                        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                          <MiniStat n={summary.sets} t="Sets" />
+                          <MiniStat n={summary.volume.toLocaleString()} t="lb volume" />
+                          <MiniStat n={summary.minutes} t="Minutes" />
+                          <MiniStat n={rpe ?? "–"} t="RPE" />
+                        </div>
+                      )}
+                      {isToday && (
+                        <button onClick={start} style={{ ...(isDayDone ? btnG : btnP), width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                          <Play size={17} fill={isDayDone ? "none" : C.inkOnEnergy} /> {isDayDone ? "Train again" : "Start workout"}
+                        </button>
+                      )}
+                    </Card>
+                  ) : (
+                    <Card>
+                      <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>
+                        {isToday ? `No session assigned. Check back once Coach ${coachFirst} schedules one.` : "No session assigned."}
+                      </div>
+                    </Card>
+                  )}
+                </div>
+              );
+            }
+
             const entry = SCHEDULE[selDay];
             return (
               <div>
@@ -1612,7 +2228,7 @@ export default function Forge() {
                 <PartyPopper size={40} color={C.inkOnEnergy} />
               </div>
               <h1 className="ff-d" style={{ fontSize: 40, fontWeight: 800, color: C.text, textTransform: "uppercase", lineHeight: 1, margin: 0 }}>Session complete</h1>
-              <div style={{ color: C.body, fontSize: 14, marginTop: 10 }}>{workout.name} · logged &amp; shared with Coach {coachFirst}</div>
+              <div style={{ color: C.body, fontSize: 14, marginTop: 10 }}>{activeWorkout.name} · logged &amp; shared with Coach {coachFirst}</div>
               <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
                 <Stat n={String(summary.sets)} t="Sets logged" />
                 <Stat n={summary.volume.toLocaleString()} t="lb volume" hot />
@@ -1625,12 +2241,12 @@ export default function Forge() {
               </div>
 
               <Card style={{ marginTop: 18, textAlign: "left", padding: 0 }}>
-                {workout.exercises.map((ex, i) => {
+                {activeWorkout.exercises.map((ex, i) => {
                   const sets = log.filter(l => l.i === i);
                   if (!sets.length) return null;
                   const best = sets.reduce((a, b) => ((b.w || 0) * b.reps > (a.w || 0) * a.reps ? b : a));
                   return (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: i < workout.exercises.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: i < activeWorkout.exercises.length - 1 ? `1px solid ${C.line}` : "none" }}>
                       <div style={{ color: C.body, fontSize: 13.5 }}>{ex.name}</div>
                       <div style={{ color: C.muted, fontSize: 12.5, whiteSpace: "nowrap" }}>
                         {sets.length} × best {best.w ? `${best.w} lb × ` : ""}{best.reps}
@@ -1646,12 +2262,12 @@ export default function Forge() {
           {/* TRAIN — list */}
           {tab === "train" && !active && !summary && (
             <div>
-              <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>{workout.name}</h1>
-              <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 12px" }}>{workout.duration} · {workout.focus}</div>
+              <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>{activeWorkout.name}</h1>
+              <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 12px" }}>{activeWorkout.duration} · {activeWorkout.focus}</div>
               <button onClick={start} style={{ ...btnP, width: "100%", marginBottom: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 <Play size={17} fill={C.inkOnEnergy} /> Start workout
               </button>
-              {workout.exercises.map((ex, i) => (
+              {activeWorkout.exercises.map((ex, i) => (
                 <Card key={i} style={{ marginTop: 10, padding: 0, overflow: "hidden" }}>
                   <button onClick={() => openExercise(ex.name)}
                     style={{ width: "100%", background: "none", border: "none", padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", textAlign: "left", minHeight: 48 }}>
@@ -1712,18 +2328,18 @@ export default function Forge() {
 
           {/* TRAIN — active */}
           {tab === "train" && active && (() => {
-            const ex = workout.exercises[active.i];
+            const ex = activeWorkout.exercises[active.i];
             const bw = parseWeight(ex.load) === null;
             const rows = grid[active.i] || [];
             const totalReps = log.reduce((s, l) => s + l.reps, 0);
             const totalLb = log.reduce((s, l) => s + (l.w || 0) * l.reps, 0);
-            const last = lastFor(ex.name);
+            const last = SERVER_MODE ? null : lastFor(ex.name);
             const chipStyle = { background: C.surface, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, color: C.body };
             return (
               <div style={{ textAlign: "center", paddingTop: 14 }}>
                 <div style={{ display: "flex", gap: 6, justifyContent: "center" }}
-                  aria-label={`Exercise ${active.i + 1} of ${workout.exercises.length}`}>
-                  {workout.exercises.map((_, k) => (
+                  aria-label={`Exercise ${active.i + 1} of ${activeWorkout.exercises.length}`}>
+                  {activeWorkout.exercises.map((_, k) => (
                     <span key={k} style={{
                       display: "inline-block", height: 8,
                       width: k === active.i ? 22 : 8,
@@ -1842,7 +2458,7 @@ export default function Forge() {
                 </Card>
 
                 <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                  <button onClick={() => speak(ex.cues[Math.floor(Math.random() * ex.cues.length)])}
+                  <button onClick={() => speak(ex.cues.length ? ex.cues[Math.floor(Math.random() * ex.cues.length)] : FALLBACK_CUE)}
                     style={{ ...btnG, flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
                     <Mic size={15} /> Form cue
                   </button>
@@ -2472,7 +3088,7 @@ export default function Forge() {
             )}
 
             {exTab === "instruction" && (() => {
-              const found = workout.exercises.find((e) => e.name === exDetail);
+              const found = activeWorkout.exercises.find((e) => e.name === exDetail);
               const info = EX_INFO[exDetail];
               const cues = found ? found.cues : info?.cues ? info.cues : [
                 "Brace before every rep.",

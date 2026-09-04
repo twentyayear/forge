@@ -223,6 +223,16 @@ export function createDataRouter(pool) {
         insertedSets.push(setRows[0]);
       }
 
+      // Logging a session against an assignment marks it done -- same
+      // transaction so a set-insert failure never leaves the assignment
+      // flipped without the log that justified it (or vice versa).
+      if (assignment_id) {
+        await client.query(
+          `UPDATE workout_assignments SET status = 'completed' WHERE id = $1 AND user_id = $2`,
+          [assignment_id, req.user.id]
+        );
+      }
+
       await client.query("COMMIT");
       res.status(201).json({ ...log, sets: insertedSets });
     } catch (err) {
