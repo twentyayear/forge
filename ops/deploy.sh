@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "==> [1/5] building frontend"
-npm run build
+VITE_SERVER_MODE=1 npm run build
 
 echo "==> [2/5] rsync dist/ -> /srv/workhart/web"
 rsync -az --delete dist/ "$TARGET:/srv/workhart/web/"

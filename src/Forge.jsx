@@ -42,6 +42,10 @@ button:active { transform: scale(.985); }
 const TTS_ENDPOINT = "/api/tts";
 const KYLE_VOICE = "ZAIovxRU9FXNYmauX8CL";
 
+// Build-time mode gate: only VITE_-prefixed env vars are inlined by Vite.
+// Netlify (prototype) builds never set this — server mode is droplet-only.
+const SERVER_MODE = import.meta.env.VITE_SERVER_MODE === "1";
+
 const SPOKEN_WORDS = [
   [/\bDB\b/g, "dumbbell"],
   [/\bEZ-?Bar\b/gi, "easy bar"],
@@ -622,6 +626,52 @@ function loadFuelTargets() {
 }
 function saveFuelTargets(t) { localStorage.setItem("forge.fuelTargets", JSON.stringify(t)); }
 
+// ---- Server API (server mode only) ----
+// Thin fetch wrapper — same-origin cookie session, JSON body when present.
+async function apiCall(path, opts) {
+  return fetch(path, {
+    credentials: "same-origin",
+    headers: opts?.body ? { "Content-Type": "application/json" } : undefined,
+    ...opts,
+  });
+}
+// Postgres date/timestamp columns arrive JSON-serialized as full ISO strings
+// (e.g. "2026-09-02T00:00:00.000Z") — reduce to the "YYYY-MM-DD" key the rest
+// of the app already keys on.
+function dayKey(v) {
+  return typeof v === "string" ? v.slice(0, 10) : iso(new Date(v));
+}
+// bootstrap `fuel` rows -> the { "<iso>": [{id,name,kcal,protein,carbs,fat}] } shape.
+function fuelRowsToLog(rows) {
+  const out = {};
+  for (const r of rows) {
+    const day = dayKey(r.eaten_on);
+    const item = { id: r.id, name: r.name, kcal: r.calories ?? 0, protein: r.protein_g ?? 0, carbs: r.carbs_g ?? 0, fat: r.fat_g ?? 0 };
+    (out[day] ??= []).push(item);
+  }
+  return out;
+}
+// bootstrap `checkins` rows -> { "<iso>": {score, answers} }, for the real trend series.
+function checkinsToMap(rows) {
+  const out = {};
+  for (const r of rows) out[dayKey(r.day)] = { score: r.score, answers: r.answers };
+  return out;
+}
+// Server-mode readiness trend: today + prior days from real checkin rows only
+// (no mock SCHEDULE fallback — that stays prototype-only per the ask).
+function readinessSeriesForServer(checkinsMap, todayScore) {
+  const todayIso = iso(TODAY);
+  const series = [];
+  for (let o = -9; o <= 0; o++) {
+    const d = new Date(TODAY.getTime() + o * DAY_MS);
+    const k = iso(d);
+    const label = `${d.getMonth() + 1}/${d.getDate()}`;
+    if (k === todayIso) series.push({ d: label, v: todayScore, today: true });
+    else if (checkinsMap[k]) series.push({ d: label, v: checkinsMap[k].score });
+  }
+  return series;
+}
+
 const PROGRAMS = [
   { name: "40 Day Fitness",             meta: "40 days · 5 sessions/week",                     blurb: "Kyle's total-body reset. Show up, follow the day, get strong.", free: true },
   { name: "Runner's Workout",           meta: "8 weeks · 4 runs + 2 lifts/week",               blurb: "Engine work plus the lifting that keeps runners durable.", price: "$29" },
@@ -656,7 +706,21 @@ const PROGRAM_40 = Array.from({ length: 40 }, (_, i) => {
 
 // ---- App ----
 export default function Forge() {
-  const [screen, setScreen] = useState("login");
+  const [screen, setScreen] = useState(SERVER_MODE ? "boot" : "login");
+  // ---- Server mode: auth + hydration state (unused, harmless, in prototype mode) ----
+  const [authStage, setAuthStage] = useState("email"); // "email" | "sent"
+  const [authEmail, setAuthEmail] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authExpired, setAuthExpired] = useState(false);
+  const [writeError, setWriteError] = useState("");
+  const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
+  const [serverUser, setServerUser] = useState(null); // bootstrap `user` row (server mode)
+  const firstName = (SERVER_MODE && serverUser?.name ? serverUser.name : "Alex").split(" ")[0];
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState(null);
+  const [foodUnavailable, setFoodUnavailable] = useState(false);
   const [device, setDevice] = useState(() => localStorage.getItem("forge.device") || "");
   const [pickingDevice, setPickingDevice] = useState(false);
   const [survey, setSurvey] = useState({});
@@ -667,7 +731,10 @@ export default function Forge() {
       return s?.score ?? READINESS_TODAY;
     } catch { return READINESS_TODAY; }
   });
-  const readinessSeries = useMemo(() => readinessSeriesFor(readyToday), [readyToday]);
+  const readinessSeries = useMemo(
+    () => (SERVER_MODE ? readinessSeriesForServer(serverCheckins, readyToday) : readinessSeriesFor(readyToday)),
+    [readyToday, serverCheckins]
+  );
   const recentAvg = recentAvgFor(readinessSeries);
   const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
@@ -766,6 +833,64 @@ export default function Forge() {
   };
   useEffect(() => () => stopAudio(), []);
 
+  // ---- Server mode: sign-in state + bootstrap hydration ----
+  const goSignedOut = () => {
+    setScreen("login");
+    setAuthStage("email");
+  };
+  const hydrateFromBootstrap = (data) => {
+    const profile = data.profile || {};
+    if (data.user) setServerUser(data.user);
+    setFuelLog(fuelRowsToLog(data.fuel || []));
+    if (profile.fuelTargets && typeof profile.fuelTargets === "object") {
+      setFuelTargets({ ...DEFAULT_FUEL_TARGETS, ...profile.fuelTargets });
+    }
+    if (Number.isFinite(profile.bodyweight)) setBodyweight(profile.bodyweight);
+    if (typeof profile.coach === "string" && profile.coach) setCoach(profile.coach);
+    if (typeof profile.device === "string") setDevice(profile.device);
+
+    const cmap = checkinsToMap(data.checkins || []);
+    setServerCheckins(cmap);
+    const todayEntry = cmap[iso(TODAY)];
+    setReadyToday(todayEntry ? todayEntry.score : READINESS_TODAY);
+
+    const hasAnyData = (data.checkins || []).length > 0 || (data.fuel || []).length > 0;
+    if (!hasAnyData && localStorage.getItem("forge.importDismissed") !== "1") {
+      setScreen("import");
+    } else if (todayEntry) {
+      setScreen("app");
+    } else {
+      setScreen("survey");
+    }
+  };
+  const refetchBootstrap = async () => {
+    const res = await apiCall("/api/bootstrap");
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't refresh your data — try again."); return; }
+    hydrateFromBootstrap(await res.json());
+  };
+  useEffect(() => {
+    if (!SERVER_MODE) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("auth") === "expired") {
+      setAuthExpired(true);
+      params.delete("auth");
+      const qs = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    }
+    (async () => {
+      try {
+        const meRes = await apiCall("/api/auth/me");
+        if (meRes.status !== 200) { setScreen("login"); return; }
+        const bRes = await apiCall("/api/bootstrap");
+        if (bRes.status === 401 || !bRes.ok) { setScreen("login"); return; }
+        hydrateFromBootstrap(await bRes.json());
+      } catch {
+        setScreen("login");
+      }
+    })();
+  }, []); // eslint-disable-line
+
   // Initialize the set grid when the exercise changes; collapse the video
   useEffect(() => {
     if (active && grid[active.i] === undefined) {
@@ -800,17 +925,12 @@ export default function Forge() {
     setCommentRef(null);
   };
 
-  const addFuel = (entry) => {
-    const day = fuelDay;
-    const item = {
-      id: fuelIdRef.current++, name: entry.name, brand: entry.brand,
-      kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0,
-    };
+  const applyFuelAdd = (day, item) => {
     setFuelLog((cur) => {
       const prevRows = cur[day] ?? [];
       const dayLog = [...prevRows, item];
       const next = { ...cur, [day]: dayLog };
-      saveFuelLog(next);
+      if (!SERVER_MODE) saveFuelLog(next);
 
       const prevProtein = prevRows.reduce((s, e) => s + (e.protein || 0), 0);
       const newProtein = dayLog.reduce((s, e) => s + (e.protein || 0), 0);
@@ -823,8 +943,42 @@ export default function Forge() {
       return next;
     });
   };
-  const deleteFuel = (id) => {
+  const addFuel = async (entry) => {
     const day = fuelDay;
+    if (SERVER_MODE) {
+      const res = await apiCall("/api/fuel-logs", {
+        method: "POST",
+        body: JSON.stringify({
+          eaten_on: day, name: entry.name,
+          calories: Math.round(entry.kcal || 0),
+          protein_g: Math.round(entry.protein || 0),
+          carbs_g: Math.round(entry.carbs || 0),
+          fat_g: Math.round(entry.fat || 0),
+          source: "custom",
+        }),
+      });
+      if (res.status === 401) return goSignedOut();
+      if (!res.ok) { setWriteError("Couldn't save that food — try again."); return; }
+      const row = await res.json();
+      applyFuelAdd(day, { id: row.id, name: row.name, kcal: row.calories ?? 0, protein: row.protein_g ?? 0, carbs: row.carbs_g ?? 0, fat: row.fat_g ?? 0 });
+      setWriteError("");
+      return;
+    }
+    applyFuelAdd(day, {
+      id: fuelIdRef.current++, name: entry.name, brand: entry.brand,
+      kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0,
+    });
+  };
+  const deleteFuel = async (id) => {
+    const day = fuelDay;
+    if (SERVER_MODE) {
+      const res = await apiCall(`/api/fuel-logs/${id}`, { method: "DELETE" });
+      if (res.status === 401) return goSignedOut();
+      if (!res.ok) { setWriteError("Couldn't delete that entry — try again."); return; }
+      setFuelLog((cur) => ({ ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) }));
+      setWriteError("");
+      return;
+    }
     setFuelLog((cur) => {
       const next = { ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) };
       saveFuelLog(next);
@@ -835,6 +989,7 @@ export default function Forge() {
     const q = foodQ.trim();
     if (q.length < 2) return;
     setFoodBusy(true);
+    setFoodUnavailable(false);
     try {
       const res = await fetch("/api/food?q=" + encodeURIComponent(q));
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -842,6 +997,7 @@ export default function Forge() {
       setFoodResults(Array.isArray(json.results) ? json.results : []);
     } catch (e) {
       setFoodResults([]);
+      setFoodUnavailable(true);
     } finally {
       setFoodBusy(false);
     }
@@ -858,19 +1014,100 @@ export default function Forge() {
     setManual({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
     setManualOpen(false);
   };
-  const changeBodyweight = (v) => {
-    setBodyweight(v);
-    localStorage.setItem("forge.bodyweight", String(v));
+  const changeBodyweight = async (v) => {
+    if (!SERVER_MODE) {
+      setBodyweight(v);
+      localStorage.setItem("forge.bodyweight", String(v));
+      return;
+    }
+    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ bodyweight: v }) });
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't save bodyweight — try again."); return; }
+    const profile = await res.json();
+    setBodyweight(profile.bodyweight);
+    setWriteError("");
   };
-  const calcTargets = () => {
+  const calcTargets = async () => {
     const kcalMult = { cut: 12, maintain: 14, build: 16 }[fuelGoal];
     const proteinMult = { cut: 1.0, maintain: 0.9, build: 0.85 }[fuelGoal];
     const next = {
       kcal: Math.round((bodyweight * kcalMult) / 10) * 10,
       protein: Math.round(Math.round(bodyweight * proteinMult) / 5) * 5,
     };
-    setFuelTargets(next);
-    saveFuelTargets(next);
+    if (!SERVER_MODE) {
+      setFuelTargets(next);
+      saveFuelTargets(next);
+      return;
+    }
+    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ fuelTargets: next }) });
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't save targets — try again."); return; }
+    const profile = await res.json();
+    setFuelTargets({ ...DEFAULT_FUEL_TARGETS, ...profile.fuelTargets });
+    setWriteError("");
+  };
+  // Coach name is a live-typed field — reflect keystrokes immediately (matches
+  // prototype's per-keystroke localStorage save) and persist async; on failure
+  // show the inline note without fighting the user's typing.
+  const changeCoach = async (v) => {
+    setCoach(v);
+    if (!SERVER_MODE) { localStorage.setItem("forge.coach", v); return; }
+    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ coach: v }) });
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't save coach name — try again."); return; }
+    setWriteError("");
+  };
+  const exportData = () => {
+    const checkins = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith("forge.readiness.")) continue;
+      try {
+        const v = JSON.parse(localStorage.getItem(key));
+        if (v && typeof v.score === "number" && v.answers) checkins[key.slice("forge.readiness.".length)] = { score: v.score, answers: v.answers };
+      } catch {}
+    }
+    const payload = { checkins, fuelLog, bodyweight, fuelTargets, coach, device };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "workhart-export.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const handleSignOut = async () => {
+    await apiCall("/api/auth/logout", { method: "POST" }).catch(() => {});
+    setShowSettings(false);
+    goSignedOut();
+  };
+  const skipImport = () => {
+    localStorage.setItem("forge.importDismissed", "1");
+    setScreen(serverCheckins[iso(TODAY)] ? "app" : "survey");
+  };
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError(""); setImportResult(null); setImportBusy(true);
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const res = await apiCall("/api/import", { method: "POST", body: JSON.stringify(json) });
+      if (res.status === 401) { setImportBusy(false); return goSignedOut(); }
+      if (res.status === 409) {
+        setImportError("This account already has data.");
+        setImportBusy(false);
+        await refetchBootstrap();
+        return;
+      }
+      if (!res.ok) { setImportError("Import failed — check the file and try again."); setImportBusy(false); return; }
+      const data = await res.json();
+      setImportResult(data.imported);
+      setImportBusy(false);
+      await refetchBootstrap();
+    } catch {
+      setImportError("Couldn't read that file.");
+      setImportBusy(false);
+    }
   };
 
   const start = () => {
@@ -878,7 +1115,7 @@ export default function Forge() {
     setLog([]); setSummary(null); setRest(null); setRpe(null); setGrid({});
     startedAt.current = Date.now();
     setActive({ i: 0, done: 0 });
-    speak("Welcome back, Alex. Today is Push Day A. Warm up well — then we get after it.");
+    speak(`Welcome back, ${firstName}. Today is Push Day A. Warm up well — then we get after it.`);
   };
 
   const finish = (finalLog) => {
@@ -936,8 +1173,77 @@ export default function Forge() {
     }
   };
 
+  // ---- Boot (server mode: checking session before first paint) ----
+  if (screen === "boot") {
+    return (
+      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{css}</style>
+        <HartMark size={54} />
+      </div>
+    );
+  }
+
   // ---- Login ----
   if (screen === "login") {
+    if (SERVER_MODE) {
+      const submitEmail = async () => {
+        const email = authEmail.trim();
+        if (!email) return;
+        setAuthBusy(true);
+        setAuthError("");
+        try {
+          const res = await apiCall("/api/auth/request-link", { method: "POST", body: JSON.stringify({ email }) });
+          if (!res.ok) { setAuthError("Something went wrong — try again."); setAuthBusy(false); return; }
+          setAuthStage("sent");
+        } catch {
+          setAuthError("Something went wrong — try again.");
+        }
+        setAuthBusy(false);
+      };
+      return (
+        <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <style>{css}</style>
+          <div style={{ width: "100%", maxWidth: 380 }}>
+            <div style={{ textAlign: "center", marginBottom: 40 }}>
+              <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <HartMark size={64} />
+              </div>
+              <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ width: "min(100%, 406px)", height: "auto", display: "block", margin: "0 auto" }} />
+            </div>
+
+            {authExpired && (
+              <div style={{ color: C.energy, fontSize: 12.5, marginBottom: 16, textAlign: "center" }}>
+                That link expired — request a new one.
+              </div>
+            )}
+
+            {authStage === "email" ? (
+              <>
+                <input aria-label="Email" placeholder="Email" type="email" value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submitEmail(); }}
+                  style={inp} />
+                {authError && <div style={{ color: C.energy, fontSize: 12, marginBottom: 10 }}>{authError}</div>}
+                <button onClick={submitEmail} disabled={authBusy || !authEmail.trim()}
+                  style={{ ...btnP, width: "100%", marginTop: 6, opacity: authBusy || !authEmail.trim() ? .5 : 1 }}>
+                  {authBusy ? "Sending…" : "Email me a sign-in link"}
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ color: C.body, fontSize: 14.5, lineHeight: 1.6, textAlign: "center", padding: "8px 0" }}>
+                  Check your email for a sign-in link.
+                </div>
+                <button onClick={() => { setAuthStage("email"); setAuthEmail(""); setAuthError(""); }}
+                  style={{ ...btnG, width: "100%", marginTop: 14 }}>
+                  Use a different email
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
         <style>{css}</style>
@@ -983,12 +1289,59 @@ export default function Forge() {
     );
   }
 
+  // ---- Import (server mode: fresh account, no data yet) ----
+  if (screen === "import") {
+    return (
+      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <style>{css}</style>
+        <div style={{ width: "100%", maxWidth: 380 }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div style={{ margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <HartMark size={54} />
+            </div>
+            <div className="ff-d" style={{ fontSize: 26, fontWeight: 700, color: C.text, textTransform: "uppercase" }}>Import your data</div>
+            <div style={{ color: C.muted, fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
+              Bring over check-ins and fuel logs from a WORKHART export file.
+            </div>
+          </div>
+          <Card>
+            <input aria-label="Import file" type="file" accept="application/json" onChange={handleImportFile} disabled={importBusy}
+              style={{ color: C.body, fontSize: 13, width: "100%" }} />
+            {importBusy && <div style={{ color: C.muted, fontSize: 12, marginTop: 10 }}>Importing…</div>}
+            {importError && <div style={{ color: C.energy, fontSize: 12, marginTop: 10 }}>{importError}</div>}
+            {importResult && (
+              <div style={{ color: C.body, fontSize: 13, marginTop: 10 }}>
+                Imported {importResult.checkins} check-in{importResult.checkins === 1 ? "" : "s"}, {importResult.fuel} fuel entr{importResult.fuel === 1 ? "y" : "ies"}
+                {importResult.skipped ? `, skipped ${importResult.skipped}` : ""}.
+              </div>
+            )}
+          </Card>
+          <button onClick={skipImport} style={{ ...btnG, width: "100%", marginTop: 14 }}>Skip — start fresh</button>
+        </div>
+      </div>
+    );
+  }
+
   // ---- Morning check-in ----
   if (screen === "survey") {
-    const finishSurvey = (finalAnswers) => {
-      const todayKey = `forge.readiness.${iso(TODAY)}`;
+    const finishSurvey = async (finalAnswers) => {
       const sum = Object.values(finalAnswers).reduce((s, v) => s + v, 0);
       const score = Math.round((sum / 21) * 100);
+      if (SERVER_MODE) {
+        const res = await apiCall("/api/checkins", {
+          method: "POST",
+          body: JSON.stringify({ day: iso(TODAY), score, answers: finalAnswers }),
+        });
+        if (res.status === 401) return goSignedOut();
+        if (!res.ok) { setWriteError("Couldn't save your check-in — try again."); return; }
+        const row = await res.json();
+        setServerCheckins((cur) => ({ ...cur, [iso(TODAY)]: { score: row.score, answers: row.answers } }));
+        setReadyToday(row.score);
+        setScreen("app");
+        speak(`Readiness logged at ${row.score}. ${row.score >= 75 ? "Green light — we push today." : row.score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
+        return;
+      }
+      const todayKey = `forge.readiness.${iso(TODAY)}`;
       localStorage.setItem(todayKey, JSON.stringify({ score, answers: finalAnswers }));
       setReadyToday(score);
       setScreen("app");
@@ -1072,6 +1425,10 @@ export default function Forge() {
           </div>
         </div>
 
+        {writeError && (
+          <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
+        )}
+
         <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 104px" }}>
 
           {/* TODAY */}
@@ -1087,7 +1444,7 @@ export default function Forge() {
 
                 {isToday && (
                   <>
-                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Morning, Alex</h1>
+                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Morning, {firstName}</h1>
 
                     <Card role="button" tabIndex={0} aria-expanded={showReadiness} onClick={openReadiness}
                       onKeyDown={(e) => { if (e.key === "Enter") openReadiness(); }}
@@ -1618,7 +1975,9 @@ export default function Forge() {
                         ))}
                       </div>
                     ) : (
-                      <div style={{ color: C.muted, fontSize: 12.5, marginTop: 12 }}>Nothing found — try a simpler term, or add it manually below.</div>
+                      <div style={{ color: C.muted, fontSize: 12.5, marginTop: 12 }}>
+                        {foodUnavailable ? "Search unavailable right now — add it manually below." : "Nothing found — try a simpler term, or add it manually below."}
+                      </div>
                     )
                   )}
                 </Card>
@@ -2161,7 +2520,7 @@ export default function Forge() {
             <div style={{ marginTop: 18 }}>
               <Label>Coach name</Label>
               <input aria-label="Coach name" maxLength={40} style={inp} value={coach}
-                onChange={(e) => { const v = e.target.value; setCoach(v); localStorage.setItem("forge.coach", v); }} />
+                onChange={(e) => changeCoach(e.target.value)} />
               <div style={{ color: C.muted, fontSize: 11.5, marginTop: -6, marginBottom: 16 }}>Shown wherever your coach appears — and spoken by the voice.</div>
 
               <Card style={{ display: "flex", gap: 13, alignItems: "center" }}>
@@ -2171,6 +2530,15 @@ export default function Forge() {
                   <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · WORKHART</div>
                 </div>
               </Card>
+
+              {!SERVER_MODE && (
+                <button onClick={exportData} style={{ ...btnG, width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                  <Download size={16} /> Export my data
+                </button>
+              )}
+              {SERVER_MODE && (
+                <button onClick={handleSignOut} style={{ ...btnG, width: "100%", marginTop: 16 }}>Sign out</button>
+              )}
             </div>
           </Sheet>
         )}
