@@ -90,6 +90,23 @@ async function makeWorkoutAssignment(user) {
   return assignmentRows[0].id;
 }
 
+// U5a (ask 30) helpers: an admin-authored workout assigned to a given user on
+// a given date, for the bootstrap `assignments` addition below.
+async function makeAdminWorkout(admin, title, blocks) {
+  const { rows } = await pool.query(
+    `INSERT INTO workouts (created_by, title, blocks) VALUES ($1, $2, $3) RETURNING id`,
+    [admin.id, title, JSON.stringify(blocks)]
+  );
+  return rows[0].id;
+}
+
+async function assignWorkoutToUser(user, workoutId, admin, scheduledFor) {
+  await pool.query(
+    `INSERT INTO workout_assignments (user_id, workout_id, scheduled_for, assigned_by) VALUES ($1, $2, $3, $4)`,
+    [user.id, workoutId, scheduledFor, admin.id]
+  );
+}
+
 test("bootstrap: returns exactly the session user's data, shape matches spec, no cross-leak", async () => {
   const userA = await makeUser("user", "bootA");
   const userB = await makeUser("user", "bootB");
@@ -151,6 +168,31 @@ test("bootstrap: returns exactly the session user's data, shape matches spec, no
   assert.equal(body.workoutLogs[0].sets.length, 1);
   assert.equal(body.workoutLogs[0].sets[0].exercise_key, "bench_press");
   assert.equal(body.workoutLogs[0].sets[0].reps, 8);
+});
+
+test("bootstrap: assigned workout (scheduled today) appears in assignments with joined workout blocks; another user's assignment does NOT", async () => {
+  const admin = await makeUser("admin", "bootAssignAdmin");
+  const userA = await makeUser("user", "bootAssignA");
+  const userB = await makeUser("user", "bootAssignB");
+
+  const blocks = [{ exercise_key: "bench_press", sets: [{ reps: 8, weight_lbs: 135, rpe: 7.5 }] }];
+  const workoutId = await makeAdminWorkout(admin, "Bootstrap workout", blocks);
+
+  const { rows: todayRows } = await pool.query(`SELECT CURRENT_DATE::text AS today`);
+  const today = todayRows[0].today;
+
+  await assignWorkoutToUser(userA, workoutId, admin, today);
+  await assignWorkoutToUser(userB, workoutId, admin, today);
+
+  const cookieA = await signIn(userA);
+  const res = await fetch(`${baseUrl}/api/bootstrap`, { headers: authHeaders(cookieA) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  assert.equal(body.assignments.length, 1, "only user A's assignment appears");
+  assert.equal(body.assignments[0].status, "assigned");
+  assert.equal(body.assignments[0].workout.title, "Bootstrap workout");
+  assert.deepEqual(body.assignments[0].workout.blocks, blocks, "workout blocks joined onto the assignment");
 });
 
 test("checkin POST twice same day upserts: one row, second wins", async () => {

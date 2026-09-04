@@ -43,27 +43,39 @@ export function createDataRouter(pool) {
 
   router.get("/bootstrap", requireUser, async (req, res) => {
     try {
-      const [profileResult, checkinsResult, fuelResult, logsResult, setsResult] = await Promise.all([
-        pool.query(`SELECT profile FROM users WHERE id = $1`, [req.user.id]),
-        pool.query(`SELECT day, score, answers FROM checkins WHERE user_id = $1 ORDER BY day ASC`, [
-          req.user.id,
-        ]),
-        pool.query(
-          `SELECT id, eaten_on, name, calories, protein_g, carbs_g, fat_g, source
-           FROM fuel_logs WHERE user_id = $1 ORDER BY eaten_on ASC`,
-          [req.user.id]
-        ),
-        pool.query(
-          `SELECT id, performed_at, notes, assignment_id
-           FROM workout_logs WHERE user_id = $1 ORDER BY performed_at ASC`,
-          [req.user.id]
-        ),
-        pool.query(
-          `SELECT log_id, exercise_key, set_no, reps, weight_lbs, rpe
-           FROM workout_log_sets WHERE user_id = $1 ORDER BY log_id ASC, set_no ASC`,
-          [req.user.id]
-        ),
-      ]);
+      const [profileResult, checkinsResult, fuelResult, logsResult, setsResult, assignmentsResult] =
+        await Promise.all([
+          pool.query(`SELECT profile FROM users WHERE id = $1`, [req.user.id]),
+          pool.query(`SELECT day, score, answers FROM checkins WHERE user_id = $1 ORDER BY day ASC`, [
+            req.user.id,
+          ]),
+          pool.query(
+            `SELECT id, eaten_on, name, calories, protein_g, carbs_g, fat_g, source
+             FROM fuel_logs WHERE user_id = $1 ORDER BY eaten_on ASC`,
+            [req.user.id]
+          ),
+          pool.query(
+            `SELECT id, performed_at, notes, assignment_id
+             FROM workout_logs WHERE user_id = $1 ORDER BY performed_at ASC`,
+            [req.user.id]
+          ),
+          pool.query(
+            `SELECT log_id, exercise_key, set_no, reps, weight_lbs, rpe
+             FROM workout_log_sets WHERE user_id = $1 ORDER BY log_id ASC, set_no ASC`,
+            [req.user.id]
+          ),
+          // assignments: from 7 days ago forward -- lets a just-missed workout
+          // still show, without dragging in the user's whole assignment history.
+          pool.query(
+            `SELECT wa.id, wa.scheduled_for, wa.status,
+                    w.id AS workout_id, w.title AS workout_title, w.notes AS workout_notes, w.blocks AS workout_blocks
+             FROM workout_assignments wa
+             JOIN workouts w ON w.id = wa.workout_id
+             WHERE wa.user_id = $1 AND wa.scheduled_for >= CURRENT_DATE - 7
+             ORDER BY wa.scheduled_for ASC`,
+            [req.user.id]
+          ),
+        ]);
 
       const setsByLog = new Map();
       for (const s of setsResult.rows) {
@@ -86,12 +98,20 @@ export function createDataRouter(pool) {
         sets: setsByLog.get(l.id) ?? [],
       }));
 
+      const assignments = assignmentsResult.rows.map((a) => ({
+        id: a.id,
+        scheduled_for: a.scheduled_for,
+        status: a.status,
+        workout: { id: a.workout_id, title: a.workout_title, notes: a.workout_notes, blocks: a.workout_blocks },
+      }));
+
       res.status(200).json({
         user: req.user,
         profile: profileResult.rows[0]?.profile ?? {},
         checkins: checkinsResult.rows,
         fuel: fuelResult.rows,
         workoutLogs,
+        assignments,
       });
     } catch (err) {
       console.error(`bootstrap query error: ${err.message}`);

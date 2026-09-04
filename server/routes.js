@@ -2,11 +2,11 @@
 // endpoint (U3+) copies.
 //
 // GET /api/checkins is the canonical scoped read: filtered strictly by
-// req.user.id (never by any id from the request). GET /api/admin/users is
-// the one exception the invariant allows — a user id may appear in the
-// response (not as scoping input) because requireAdmin gates the whole route.
+// req.user.id (never by any id from the request). Admin routes (a user id
+// may appear as input, gated by requireAdmin) now live in server/admin.js --
+// GET /api/admin/users moved there in U5a (ask 30).
 import { Router } from "express";
-import { makeRequireUser, requireAdmin } from "./authz.js";
+import { makeRequireUser } from "./authz.js";
 
 export function createScopedRouter(pool) {
   const router = Router();
@@ -37,23 +37,6 @@ export function createScopedRouter(pool) {
       res.status(200).json(rows);
     } catch (err) {
       console.error(`checkins query error: ${err.message}`);
-      res.status(500).json({ error: "internal_error" });
-    }
-  });
-
-  router.get("/admin/users", requireUser, requireAdmin, async (_req, res) => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT u.id, u.email, u.name, u.role, u.created_at,
-                MAX(c.day) AS last_checkin_day
-         FROM users u
-         LEFT JOIN checkins c ON c.user_id = u.id
-         GROUP BY u.id
-         ORDER BY u.created_at ASC`
-      );
-      res.status(200).json(rows);
-    } catch (err) {
-      console.error(`admin users query error: ${err.message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });
