@@ -1,6 +1,6 @@
 # WORKHART (repo name: forge)
 
-AI-coached fitness app. Prototype LIVE at workhart.netlify.app (Netlify CI off `main`, repo PUBLIC: twentyayear/forge). Backend milestone building at **alphaecho.io** (DO droplet 137.184.19.44, `ssh workhart`; deploy rail in `docs/DEPLOY.md`). Current position: see `docs/PRD.md` — U5b (Kyle console UI + assigned workouts in the athlete app: role-gated console roster/dashboard/workout-builder, athlete Today card + engine driven by real assignments) FULLY green 2026-09-04 — 33/33 tests green, full live green-light passed on alphaecho.io.
+AI-coached fitness app. Prototype LIVE at workhart.netlify.app (Netlify CI off `main`, repo PUBLIC: twentyayear/forge). Backend milestone building at **alphaecho.io** (DO droplet 137.184.19.44, `ssh workhart`; deploy rail in `docs/DEPLOY.md`). Current position: see `docs/PRD.md` — U6 (messaging: Kyle↔athlete threads — athlete Coach tab + Kyle console Inbox/thread, unread badges both sides) FULLY green 2026-09-04 — 41/41 tests green, full live green-light passed on alphaecho.io.
 
 ## Build workflow
 Fable writes one ask at a time (`docs/asks/NN-*.md`) with a binary green-light; a fresh Sonnet session builds exactly that ask; Sam confirms green before the next. Build only what the ask says, then stop. Report green-light results PASS/FAIL with actual output.

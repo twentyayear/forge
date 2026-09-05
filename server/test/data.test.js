@@ -195,6 +195,29 @@ test("bootstrap: assigned workout (scheduled today) appears in assignments with 
   assert.deepEqual(body.assignments[0].workout.blocks, blocks, "workout blocks joined onto the assignment");
 });
 
+// U6 (ask 32): bootstrap's unreadMessages count.
+test("bootstrap: unreadMessages counts only this user's unread kyle-sent rows", async () => {
+  const userA = await makeUser("user", "bootUnreadA");
+  const userB = await makeUser("user", "bootUnreadB");
+
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'kyle', 'Hey there')`, [userA.id]);
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'kyle', 'How was training?')`, [
+    userA.id,
+  ]);
+  await pool.query(
+    `INSERT INTO messages (user_id, sender, body, read_at) VALUES ($1, 'kyle', 'Old news', now())`,
+    [userA.id]
+  );
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'user', 'Felt good')`, [userA.id]);
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'kyle', 'For B only')`, [userB.id]);
+
+  const cookieA = await signIn(userA);
+  const res = await fetch(`${baseUrl}/api/bootstrap`, { headers: authHeaders(cookieA) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.unreadMessages, 2, "the two unread kyle-sent rows, not the read one, the user-sent one, or B's");
+});
+
 test("checkin POST twice same day upserts: one row, second wins", async () => {
   const user = await makeUser("user", "checkinUpsert");
   const cookie = await signIn(user);

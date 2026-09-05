@@ -9,6 +9,7 @@ import { createScopedRouter } from "./routes.js";
 import { createDataRouter } from "./data.js";
 import { createMediaRouter } from "./media.js";
 import { createAdminRouter } from "./admin.js";
+import { createMessagesRouter } from "./messages.js";
 
 export function createApp(pool) {
   const app = express();
@@ -42,6 +43,7 @@ export function createApp(pool) {
   app.use("/api", createDataRouter(pool));
   app.use("/api", createMediaRouter(pool));
   app.use("/api", createAdminRouter(pool));
+  app.use("/api", createMessagesRouter(pool));
 
   return app;
 }

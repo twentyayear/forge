@@ -43,7 +43,7 @@ export function createDataRouter(pool) {
 
   router.get("/bootstrap", requireUser, async (req, res) => {
     try {
-      const [profileResult, checkinsResult, fuelResult, logsResult, setsResult, assignmentsResult] =
+      const [profileResult, checkinsResult, fuelResult, logsResult, setsResult, assignmentsResult, unreadResult] =
         await Promise.all([
           pool.query(`SELECT profile FROM users WHERE id = $1`, [req.user.id]),
           pool.query(`SELECT day, score, answers FROM checkins WHERE user_id = $1 ORDER BY day ASC`, [
@@ -73,6 +73,12 @@ export function createDataRouter(pool) {
              JOIN workouts w ON w.id = wa.workout_id
              WHERE wa.user_id = $1 AND wa.scheduled_for >= CURRENT_DATE - 7
              ORDER BY wa.scheduled_for ASC`,
+            [req.user.id]
+          ),
+          // U6 (ask 32): count of Kyle-sent messages the athlete hasn't read
+          // yet, for the Coach nav badge.
+          pool.query(
+            `SELECT COUNT(*)::int AS n FROM messages WHERE user_id = $1 AND sender = 'kyle' AND read_at IS NULL`,
             [req.user.id]
           ),
         ]);
@@ -112,6 +118,7 @@ export function createDataRouter(pool) {
         fuel: fuelResult.rows,
         workoutLogs,
         assignments,
+        unreadMessages: unreadResult.rows[0].n,
       });
     } catch (err) {
       console.error(`bootstrap query error: ${err.message}`);

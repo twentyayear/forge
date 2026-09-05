@@ -641,6 +641,15 @@ async function apiCall(path, opts) {
 function dayKey(v) {
   return typeof v === "string" ? v.slice(0, 10) : iso(new Date(v));
 }
+// U6 (ask 32): Inbox's "relative day" -- Today / Yesterday / weekday / MM-DD.
+function relativeDay(v) {
+  const k = dayKey(v);
+  const days = Math.round((TODAY.getTime() - new Date(k + "T00:00:00").getTime()) / DAY_MS);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days > 1 && days < 7) return new Date(k + "T00:00:00").toLocaleDateString([], { weekday: "short" });
+  return k.slice(5);
+}
 // bootstrap `fuel` rows -> the { "<iso>": [{id,name,kcal,protein,carbs,fat}] } shape.
 function fuelRowsToLog(rows) {
   const out = {};
@@ -746,6 +755,13 @@ export default function Forge() {
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
   const [serverUser, setServerUser] = useState(null); // bootstrap `user` row (server mode)
   const [serverAssignments, setServerAssignments] = useState([]); // bootstrap `assignments`
+  // ---- Server mode: messaging (U6, ask 32) ----
+  const [unreadMessages, setUnreadMessages] = useState(0); // bootstrap count, zeroed after the athlete's own read POST
+  const [threadMessages, setThreadMessages] = useState([]);
+  const [threadBusy, setThreadBusy] = useState(false);
+  const [msgDraft, setMsgDraft] = useState("");
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgError, setMsgError] = useState("");
   const firstName = (SERVER_MODE && serverUser?.name ? serverUser.name : "Alex").split(" ")[0];
   // Athlete-side assignment lookup + engine data (server mode only; prototype
   // mode never populates serverAssignments, so activeWorkout === the mock).
@@ -757,13 +773,24 @@ export default function Forge() {
     [todayAssignment]
   );
   // ---- Console (admin, server mode) ----
-  const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder"
+  const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder" | "inbox" | "thread"
   const [roster, setRoster] = useState([]);
   const [rosterBusy, setRosterBusy] = useState(false);
   const [rosterError, setRosterError] = useState("");
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [overview, setOverview] = useState(null);
   const [overviewBusy, setOverviewBusy] = useState(false);
+  // ---- Console: Inbox + thread (U6, ask 32) ----
+  const [inbox, setInbox] = useState([]);
+  const [inboxBusy, setInboxBusy] = useState(false);
+  const [inboxError, setInboxError] = useState("");
+  const [adminThreadUser, setAdminThreadUser] = useState(null); // {id, name, email}
+  const [adminThreadOrigin, setAdminThreadOrigin] = useState("inbox"); // "inbox" | "dashboard" -- where Back goes
+  const [adminThread, setAdminThread] = useState([]);
+  const [adminThreadBusy, setAdminThreadBusy] = useState(false);
+  const [adminMsgDraft, setAdminMsgDraft] = useState("");
+  const [adminMsgBusy, setAdminMsgBusy] = useState(false);
+  const [adminMsgError, setAdminMsgError] = useState("");
   const [existingWorkouts, setExistingWorkouts] = useState([]);
   const [builderMode, setBuilderMode] = useState("new"); // "new" | "existing"
   const [builderTitle, setBuilderTitle] = useState("");
@@ -908,6 +935,7 @@ export default function Forge() {
       return;
     }
     setServerAssignments(data.assignments || []);
+    setUnreadMessages(Number.isFinite(data.unreadMessages) ? data.unreadMessages : 0);
     setFuelLog(fuelRowsToLog(data.fuel || []));
     if (profile.fuelTargets && typeof profile.fuelTargets === "object") {
       setFuelTargets({ ...DEFAULT_FUEL_TARGETS, ...profile.fuelTargets });
@@ -980,6 +1008,49 @@ export default function Forge() {
     return () => clearTimeout(t);
   }, [rest]);
 
+  // Coach tab thread (U6, ask 32): fetch on open, then mark Kyle's messages
+  // read and zero the nav badge.
+  useEffect(() => {
+    if (!SERVER_MODE || tab !== "coach") return;
+    let cancelled = false;
+    (async () => {
+      setThreadBusy(true);
+      try {
+        const res = await apiCall("/api/messages");
+        if (cancelled) return;
+        if (res.status === 401) { setThreadBusy(false); return goSignedOut(); }
+        if (!res.ok) { setThreadBusy(false); return; }
+        const rows = await res.json();
+        if (cancelled) return;
+        setThreadMessages(rows);
+        setThreadBusy(false);
+        const readRes = await apiCall("/api/messages/read", { method: "POST" });
+        if (!cancelled && readRes.ok) setUnreadMessages(0);
+      } catch {
+        if (!cancelled) setThreadBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab]); // eslint-disable-line
+
+  const sendThreadMessage = async () => {
+    const body = msgDraft.trim();
+    if (!body) return;
+    setMsgBusy(true); setMsgError("");
+    try {
+      const res = await apiCall("/api/messages", { method: "POST", body: JSON.stringify({ body }) });
+      if (res.status === 401) { setMsgBusy(false); return goSignedOut(); }
+      if (!res.ok) { setMsgError("Couldn't send — try again."); setMsgBusy(false); return; }
+      const row = await res.json();
+      setThreadMessages((cur) => [...cur, row]);
+      setMsgDraft("");
+      setMsgBusy(false);
+    } catch {
+      setMsgError("Couldn't send — try again.");
+      setMsgBusy(false);
+    }
+  };
+
   // ---- Console (admin, server mode): data fetching ----
   useEffect(() => {
     if (!SERVER_MODE || screen !== "console" || consoleScreen !== "roster") return;
@@ -1035,6 +1106,52 @@ export default function Forge() {
     return () => { cancelled = true; };
   }, [screen, consoleScreen]); // eslint-disable-line
 
+  // Inbox list (U6, ask 32).
+  useEffect(() => {
+    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "inbox") return;
+    let cancelled = false;
+    (async () => {
+      setInboxBusy(true); setInboxError("");
+      try {
+        const res = await apiCall("/api/admin/inbox");
+        if (cancelled) return;
+        if (res.status === 401) { setInboxBusy(false); return goSignedOut(); }
+        if (!res.ok) { setInboxError("Couldn't load the inbox — try again."); setInboxBusy(false); return; }
+        setInbox(await res.json());
+        setInboxBusy(false);
+      } catch {
+        if (!cancelled) { setInboxError("Couldn't load the inbox — try again."); setInboxBusy(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [screen, consoleScreen]); // eslint-disable-line
+
+  // Admin thread view -- fetching also marks the user's unread rows read
+  // server-side; reflect that locally in the inbox list (U6, ask 32).
+  useEffect(() => {
+    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "thread" || !adminThreadUser) return;
+    let cancelled = false;
+    (async () => {
+      setAdminThreadBusy(true);
+      try {
+        const res = await apiCall(`/api/admin/users/${adminThreadUser.id}/messages`);
+        if (cancelled) return;
+        if (res.status === 401) { setAdminThreadBusy(false); return goSignedOut(); }
+        if (!res.ok) { setAdminThreadBusy(false); return; }
+        const body = await res.json();
+        if (cancelled) return;
+        setAdminThread(body.messages);
+        setAdminThreadBusy(false);
+        if (body.marked > 0) {
+          setInbox((cur) => cur.map((r) => (r.user.id === adminThreadUser.id ? { ...r, unread: 0 } : r)));
+        }
+      } catch {
+        if (!cancelled) setAdminThreadBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [screen, consoleScreen, adminThreadUser]); // eslint-disable-line
+
   const openUserDashboard = (id) => { setSelectedUserId(id); setOverview(null); setConsoleScreen("dashboard"); };
   const backToRoster = () => { setConsoleScreen("roster"); setSelectedUserId(null); setOverview(null); };
   const openBuilder = () => {
@@ -1044,6 +1161,36 @@ export default function Forge() {
     setConsoleScreen("builder");
   };
   const backToDashboard = () => setConsoleScreen("dashboard");
+
+  // Inbox / thread (U6, ask 32).
+  const openAdminThread = (user, origin = "inbox") => {
+    setAdminThreadUser(user); setAdminThreadOrigin(origin);
+    setAdminThread([]); setAdminMsgDraft(""); setAdminMsgError("");
+    setConsoleScreen("thread");
+  };
+  const backFromThread = () => setConsoleScreen(adminThreadOrigin === "dashboard" ? "dashboard" : "inbox");
+  const sendAdminMessage = async () => {
+    const body = adminMsgDraft.trim();
+    if (!body || !adminThreadUser) return;
+    setAdminMsgBusy(true); setAdminMsgError("");
+    try {
+      const res = await apiCall(`/api/admin/users/${adminThreadUser.id}/messages`, {
+        method: "POST", body: JSON.stringify({ body }),
+      });
+      if (res.status === 401) { setAdminMsgBusy(false); return goSignedOut(); }
+      if (!res.ok) { setAdminMsgError("Couldn't send — try again."); setAdminMsgBusy(false); return; }
+      const row = await res.json();
+      setAdminThread((cur) => [...cur, row]);
+      setInbox((cur) => cur.map((r) => (r.user.id === adminThreadUser.id
+        ? { ...r, last_message: { sender: "kyle", body: row.body, created_at: row.created_at } }
+        : r)));
+      setAdminMsgDraft("");
+      setAdminMsgBusy(false);
+    } catch {
+      setAdminMsgError("Couldn't send — try again.");
+      setAdminMsgBusy(false);
+    }
+  };
 
   const addBuilderExercise = (name) => {
     setBuilderExercises((cur) => [...cur, { exercise_key: name, sets: [{ reps: 8, weight_lbs: "" }], rest_sec: "", note: "" }]);
@@ -1647,6 +1794,33 @@ export default function Forge() {
             <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
           )}
 
+          {(consoleScreen === "roster" || consoleScreen === "inbox") && (() => {
+            const inboxUnread = inbox.reduce((s, r) => s + r.unread, 0);
+            return (
+              <div style={{ display: "flex", gap: 8, padding: "14px 20px 0" }}>
+                {[["roster", "Roster"], ["inbox", "Inbox"]].map(([key, label]) => {
+                  const sel = consoleScreen === key;
+                  return (
+                    <button key={key} onClick={() => setConsoleScreen(key)} aria-pressed={sel}
+                      style={{ flex: 1, background: sel ? "rgba(41,171,226,.08)" : C.surface2,
+                        border: `1px solid ${sel ? "rgba(41,171,226,.55)" : C.line}`, borderRadius: 12,
+                        padding: "10px 0", fontSize: 12.5, fontWeight: 600, color: sel ? C.energy : C.body,
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                      {label}
+                      {key === "inbox" && inboxUnread > 0 && (
+                        <span aria-label={`${inboxUnread} unread`}
+                          style={{ minWidth: 16, height: 16, borderRadius: 999, background: C.energy, color: C.inkOnEnergy,
+                            fontSize: 9.5, fontWeight: 700, lineHeight: "16px", textAlign: "center", padding: "0 4px" }}>
+                          {inboxUnread > 9 ? "9+" : inboxUnread}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px" }}>
 
             {/* ROSTER */}
@@ -1773,7 +1947,11 @@ export default function Forge() {
                         ))}
                       </Card>
 
-                      <button onClick={openBuilder} style={{ ...btnP, width: "100%", marginTop: 16 }}>Assign a workout</button>
+                      <button onClick={() => openAdminThread(overview.user, "dashboard")}
+                        style={{ ...btnG, width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                        <MessageSquare size={16} /> Message
+                      </button>
+                      <button onClick={openBuilder} style={{ ...btnP, width: "100%", marginTop: 10 }}>Assign a workout</button>
                     </>
                   );
                 })()}
@@ -1933,6 +2111,95 @@ export default function Forge() {
                 <button onClick={submitAssignment} disabled={builderBusy} style={{ ...btnP, width: "100%", marginTop: 14, opacity: builderBusy ? .6 : 1 }}>
                   {builderBusy ? "Assigning…" : "Assign workout"}
                 </button>
+              </div>
+            )}
+
+            {/* INBOX */}
+            {consoleScreen === "inbox" && (
+              <div>
+                <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>Inbox</h1>
+                {inboxError && <div style={{ color: C.energy, fontSize: 12.5, margin: "12px 0 0" }}>{inboxError}</div>}
+                {inboxBusy ? (
+                  <div style={{ color: C.muted, fontSize: 13, marginTop: 16 }}>Loading…</div>
+                ) : (
+                  <Card style={{ marginTop: 16, padding: 0 }}>
+                    {inbox.length === 0 ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No conversations yet.</div>
+                    ) : inbox.map((row, i) => (
+                      <button key={row.user.id} onClick={() => openAdminThread(row.user, "inbox")}
+                        style={{ width: "100%", background: "none", border: "none", textAlign: "left", padding: 16,
+                          display: "flex", alignItems: "center", gap: 12,
+                          borderBottom: i < inbox.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                        <div style={ava}>{(row.user.name || row.user.email)[0].toUpperCase()}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                            <div style={{ color: C.text, fontSize: 14.5, fontWeight: 600 }}>{row.user.name}</div>
+                            {row.last_message && (
+                              <div style={{ color: C.muted, fontSize: 10.5, flexShrink: 0 }}>{relativeDay(row.last_message.created_at)}</div>
+                            )}
+                          </div>
+                          <div style={{ color: C.muted, fontSize: 12, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {row.last_message
+                              ? `${row.last_message.sender === "kyle" ? "You: " : ""}${row.last_message.body}`
+                              : "No messages yet"}
+                          </div>
+                        </div>
+                        {row.unread > 0 && <Pill tone="energy">{row.unread}</Pill>}
+                        <ChevronRight size={16} color={C.muted} />
+                      </button>
+                    ))}
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {/* THREAD (console side, Kyle on the right) */}
+            {consoleScreen === "thread" && (
+              <div>
+                <button onClick={backFromThread}
+                  style={{ background: "none", border: "none", color: C.muted, fontSize: 13, padding: "8px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                  <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Back to {adminThreadOrigin === "dashboard" ? "dashboard" : "inbox"}
+                </button>
+                <h1 className="ff-d" style={{ fontSize: 28, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "8px 0 0" }}>{adminThreadUser?.name}</h1>
+                <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{adminThreadUser?.email}</div>
+
+                <Card style={{ marginTop: 14, padding: 0 }}>
+                  {adminThreadBusy ? (
+                    <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>Loading…</div>
+                  ) : adminThread.length === 0 ? (
+                    <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No messages yet.</div>
+                  ) : (
+                    <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                      {adminThread.map((m) => {
+                        const mine = m.sender === "kyle";
+                        return (
+                          <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+                            <div style={{ maxWidth: "82%", background: mine ? "rgba(41,171,226,.13)" : C.surface2,
+                              border: `1px solid ${mine ? "rgba(41,171,226,.35)" : C.line}`, borderRadius: 14, padding: "10px 13px" }}>
+                              <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.5 }}>{m.body}</div>
+                              <div style={{ color: C.muted, fontSize: 10.5, marginTop: 4 }}>
+                                {new Date(m.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{ borderTop: adminThread.length ? `1px solid ${C.line}` : "none", padding: "12px 16px 16px" }}>
+                    {adminMsgError && <div style={{ color: C.energy, fontSize: 11.5, marginBottom: 8 }}>{adminMsgError}</div>}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input aria-label="Reply" placeholder="Write a reply…" value={adminMsgDraft}
+                        onChange={(e) => setAdminMsgDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter" && adminMsgDraft.trim()) sendAdminMessage(); }}
+                        style={{ ...inp, marginBottom: 0, flex: 1, minHeight: 44 }} />
+                      <button onClick={sendAdminMessage} disabled={!adminMsgDraft.trim() || adminMsgBusy}
+                        style={{ ...btnP, padding: "0 18px", minHeight: 44, opacity: adminMsgDraft.trim() && !adminMsgBusy ? 1 : .45, flexShrink: 0 }}>
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                </Card>
               </div>
             )}
           </div>
@@ -2829,46 +3096,102 @@ export default function Forge() {
                 <MessageSquare size={16} /> Message Coach {coachFirst}
               </button>
 
-              <Label>Session comments</Label>
-              <Card style={{ padding: 0 }}>
-                {comments.length ? comments.map((c, i) => (
-                  <div key={i} style={{ padding: "14px 16px", borderBottom: i < comments.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                    {c.ref && (
-                      <div style={{ marginBottom: 6 }}>
-                        <Pill tone="energy" style={{ fontSize: 10 }}>{c.ref.name} · {c.ref.date}</Pill>
+              {SERVER_MODE ? (
+                <>
+                  <Label>Messages</Label>
+                  <Card style={{ padding: 0 }}>
+                    {threadBusy ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>Loading…</div>
+                    ) : threadMessages.length === 0 ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>
+                        No messages yet — say hello to Coach {coachFirst}.
+                      </div>
+                    ) : (
+                      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                        {threadMessages.map((m) => {
+                          const mine = m.sender === "user";
+                          return (
+                            <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+                              <div style={{ maxWidth: "82%", display: "flex", alignItems: "flex-start", gap: 8,
+                                background: mine ? "rgba(41,171,226,.13)" : C.surface2,
+                                border: `1px solid ${mine ? "rgba(41,171,226,.35)" : C.line}`, borderRadius: 14, padding: "10px 13px" }}>
+                                {!mine && (
+                                  <button aria-label="Play message" onClick={() => speak(m.body)}
+                                    style={{ background: "none", border: "none", color: C.energy, padding: 0, marginTop: 2, display: "flex", flexShrink: 0 }}>
+                                    <Volume2 size={14} />
+                                  </button>
+                                )}
+                                <div>
+                                  <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.5 }}>{m.body}</div>
+                                  <div style={{ color: C.muted, fontSize: 10.5, marginTop: 4 }}>
+                                    {new Date(m.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
-                    <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>{c.text}</div>
-                    <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>{c.time} · seen by Coach {coachFirst}</div>
-                  </div>
-                )) : (
-                  <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>
-                    No comments yet — open a logged workout and tap Comment on Session.
-                  </div>
-                )}
-                <div style={{ borderTop: `1px solid ${C.line}`, padding: "12px 16px 16px" }}>
-                  {/* Reference chip tied to commentRef */}
-                  {commentRef && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <Pill tone="energy" style={{ fontSize: 10 }}>Re: {commentRef.name} · {commentRef.date}</Pill>
-                      <button aria-label="Clear session reference" onClick={() => setCommentRef(null)}
-                        style={{ width: 32, height: 32, minWidth: 32, background: "none", border: "none", color: C.muted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <X size={14} />
-                      </button>
+                    <div style={{ borderTop: threadMessages.length ? `1px solid ${C.line}` : "none", padding: "12px 16px 16px" }}>
+                      {msgError && <div style={{ color: C.energy, fontSize: 11.5, marginBottom: 8 }}>{msgError}</div>}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input aria-label="Message Coach" placeholder="Write a message…" value={msgDraft}
+                          onChange={(e) => setMsgDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && msgDraft.trim()) sendThreadMessage(); }}
+                          style={{ ...inp, marginBottom: 0, flex: 1, minHeight: 44 }} />
+                        <button onClick={sendThreadMessage} disabled={!msgDraft.trim() || msgBusy}
+                          style={{ ...btnP, padding: "0 18px", minHeight: 44, opacity: msgDraft.trim() && !msgBusy ? 1 : .45, flexShrink: 0 }}>
+                          Send
+                        </button>
+                      </div>
                     </div>
-                  )}
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <input aria-label="Comment" placeholder="Write a comment…" value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) submitComment(); }}
-                      style={{ ...inp, marginBottom: 0, flex: 1, minHeight: 44 }} />
-                    <button onClick={submitComment} disabled={!draft.trim()}
-                      style={{ ...btnP, padding: "0 18px", minHeight: 44, opacity: draft.trim() ? 1 : .45, flexShrink: 0 }}>
-                      Send
-                    </button>
-                  </div>
-                </div>
-              </Card>
+                  </Card>
+                </>
+              ) : (
+                <>
+                  <Label>Session comments</Label>
+                  <Card style={{ padding: 0 }}>
+                    {comments.length ? comments.map((c, i) => (
+                      <div key={i} style={{ padding: "14px 16px", borderBottom: i < comments.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                        {c.ref && (
+                          <div style={{ marginBottom: 6 }}>
+                            <Pill tone="energy" style={{ fontSize: 10 }}>{c.ref.name} · {c.ref.date}</Pill>
+                          </div>
+                        )}
+                        <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>{c.text}</div>
+                        <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>{c.time} · seen by Coach {coachFirst}</div>
+                      </div>
+                    )) : (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>
+                        No comments yet — open a logged workout and tap Comment on Session.
+                      </div>
+                    )}
+                    <div style={{ borderTop: `1px solid ${C.line}`, padding: "12px 16px 16px" }}>
+                      {/* Reference chip tied to commentRef */}
+                      {commentRef && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                          <Pill tone="energy" style={{ fontSize: 10 }}>Re: {commentRef.name} · {commentRef.date}</Pill>
+                          <button aria-label="Clear session reference" onClick={() => setCommentRef(null)}
+                            style={{ width: 32, height: 32, minWidth: 32, background: "none", border: "none", color: C.muted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <X size={14} />
+                          </button>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input aria-label="Comment" placeholder="Write a comment…" value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) submitComment(); }}
+                          style={{ ...inp, marginBottom: 0, flex: 1, minHeight: 44 }} />
+                        <button onClick={submitComment} disabled={!draft.trim()}
+                          style={{ ...btnP, padding: "0 18px", minHeight: 44, opacity: draft.trim() ? 1 : .45, flexShrink: 0 }}>
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  </Card>
+                </>
+              )}
 
               <Label>Data your coach sees</Label>
               <Card style={{ padding: 0 }}>
@@ -2910,7 +3233,17 @@ export default function Forge() {
           ].map(([key, label, Ic]) => (
             <button key={key} onClick={() => setTab(key)} aria-current={tab === key ? "page" : undefined}
               style={{ flex: 1, background: "none", border: "none", padding: "8px 4px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-              <Ic size={20} color={tab === key ? C.energy : C.muted} strokeWidth={tab === key ? 2.4 : 2} />
+              <div style={{ position: "relative" }}>
+                <Ic size={20} color={tab === key ? C.energy : C.muted} strokeWidth={tab === key ? 2.4 : 2} />
+                {key === "coach" && SERVER_MODE && unreadMessages > 0 && (
+                  <span aria-label={`${unreadMessages} unread message${unreadMessages === 1 ? "" : "s"}`}
+                    style={{ position: "absolute", top: -3, right: -8, minWidth: 15, height: 15, borderRadius: 999,
+                      background: C.energy, color: C.inkOnEnergy, fontSize: 9.5, fontWeight: 700, lineHeight: "15px",
+                      textAlign: "center", padding: "0 3px" }}>
+                    {unreadMessages > 9 ? "9+" : unreadMessages}
+                  </span>
+                )}
+              </div>
               <span style={{ fontSize: 10, fontWeight: 600, color: tab === key ? C.text : C.muted, textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</span>
             </button>
           ))}
