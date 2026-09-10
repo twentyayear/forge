@@ -773,13 +773,14 @@ export default function Forge() {
     [todayAssignment]
   );
   // ---- Console (admin, server mode) ----
-  const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder" | "inbox" | "thread"
+  const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder" | "inbox" | "thread" | "drafts" | "draftDetail"
   const [roster, setRoster] = useState([]);
   const [rosterBusy, setRosterBusy] = useState(false);
   const [rosterError, setRosterError] = useState("");
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [overview, setOverview] = useState(null);
   const [overviewBusy, setOverviewBusy] = useState(false);
+  const [autoSendBusy, setAutoSendBusy] = useState(false);
   // ---- Console: Inbox + thread (U6, ask 32) ----
   const [inbox, setInbox] = useState([]);
   const [inboxBusy, setInboxBusy] = useState(false);
@@ -791,6 +792,14 @@ export default function Forge() {
   const [adminMsgDraft, setAdminMsgDraft] = useState("");
   const [adminMsgBusy, setAdminMsgBusy] = useState(false);
   const [adminMsgError, setAdminMsgError] = useState("");
+  // ---- Console: AI Kyle drafts (U7, ask 33) ----
+  const [drafts, setDrafts] = useState([]);
+  const [draftsBusy, setDraftsBusy] = useState(false);
+  const [draftsError, setDraftsError] = useState("");
+  const [selectedDraftId, setSelectedDraftId] = useState(null);
+  const [draftBody, setDraftBody] = useState("");
+  const [draftActionBusy, setDraftActionBusy] = useState(false);
+  const [draftActionError, setDraftActionError] = useState("");
   const [existingWorkouts, setExistingWorkouts] = useState([]);
   const [builderMode, setBuilderMode] = useState("new"); // "new" | "existing"
   const [builderTitle, setBuilderTitle] = useState("");
@@ -1152,6 +1161,28 @@ export default function Forge() {
     return () => { cancelled = true; };
   }, [screen, consoleScreen, adminThreadUser]); // eslint-disable-line
 
+  // AI Kyle drafts list (U7, ask 33) -- same fetch-on-open pattern as
+  // roster/inbox above; the pending count only reflects reality once this
+  // tab has been opened at least once this session (matches the Inbox badge).
+  useEffect(() => {
+    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "drafts") return;
+    let cancelled = false;
+    (async () => {
+      setDraftsBusy(true); setDraftsError("");
+      try {
+        const res = await apiCall("/api/admin/drafts");
+        if (cancelled) return;
+        if (res.status === 401) { setDraftsBusy(false); return goSignedOut(); }
+        if (!res.ok) { setDraftsError("Couldn't load drafts — try again."); setDraftsBusy(false); return; }
+        setDrafts(await res.json());
+        setDraftsBusy(false);
+      } catch {
+        if (!cancelled) { setDraftsError("Couldn't load drafts — try again."); setDraftsBusy(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [screen, consoleScreen]); // eslint-disable-line
+
   const openUserDashboard = (id) => { setSelectedUserId(id); setOverview(null); setConsoleScreen("dashboard"); };
   const backToRoster = () => { setConsoleScreen("roster"); setSelectedUserId(null); setOverview(null); };
   const openBuilder = () => {
@@ -1189,6 +1220,67 @@ export default function Forge() {
     } catch {
       setAdminMsgError("Couldn't send — try again.");
       setAdminMsgBusy(false);
+    }
+  };
+
+  // AI Kyle drafts (U7, ask 33).
+  const selectedDraft = drafts.find((d) => d.id === selectedDraftId) || null;
+  const openDraft = (d) => {
+    setSelectedDraftId(d.id); setDraftBody(d.body); setDraftActionError("");
+    setConsoleScreen("draftDetail");
+  };
+  const backFromDraft = () => { setConsoleScreen("drafts"); setSelectedDraftId(null); };
+  const approveDraft = async () => {
+    if (!selectedDraft) return;
+    setDraftActionBusy(true); setDraftActionError("");
+    try {
+      // Persist any unsaved textarea edit first so approve sends the current body.
+      if (draftBody !== selectedDraft.body) {
+        const saveRes = await apiCall(`/api/admin/drafts/${selectedDraft.id}`, {
+          method: "PATCH", body: JSON.stringify({ body: draftBody }),
+        });
+        if (saveRes.status === 401) { setDraftActionBusy(false); return goSignedOut(); }
+        if (!saveRes.ok) { setDraftActionError("Couldn't save your edit — try again."); setDraftActionBusy(false); return; }
+      }
+      const res = await apiCall(`/api/admin/drafts/${selectedDraft.id}/approve`, { method: "POST" });
+      if (res.status === 401) { setDraftActionBusy(false); return goSignedOut(); }
+      if (!res.ok) { setDraftActionError("Couldn't approve — try again."); setDraftActionBusy(false); return; }
+      setDrafts((cur) => cur.filter((d) => d.id !== selectedDraft.id));
+      setDraftActionBusy(false);
+      backFromDraft();
+    } catch {
+      setDraftActionError("Couldn't approve — try again.");
+      setDraftActionBusy(false);
+    }
+  };
+  const rejectDraft = async () => {
+    if (!selectedDraft) return;
+    setDraftActionBusy(true); setDraftActionError("");
+    try {
+      const res = await apiCall(`/api/admin/drafts/${selectedDraft.id}/reject`, { method: "POST" });
+      if (res.status === 401) { setDraftActionBusy(false); return goSignedOut(); }
+      if (!res.ok) { setDraftActionError("Couldn't reject — try again."); setDraftActionBusy(false); return; }
+      setDrafts((cur) => cur.filter((d) => d.id !== selectedDraft.id));
+      setDraftActionBusy(false);
+      backFromDraft();
+    } catch {
+      setDraftActionError("Couldn't reject — try again.");
+      setDraftActionBusy(false);
+    }
+  };
+  const toggleAutoSend = async (userId, next) => {
+    setAutoSendBusy(true);
+    try {
+      const res = await apiCall(`/api/admin/users/${userId}/settings`, {
+        method: "PATCH", body: JSON.stringify({ kyleAutoSend: next }),
+      });
+      if (res.status === 401) { setAutoSendBusy(false); return goSignedOut(); }
+      if (!res.ok) { setAutoSendBusy(false); return; }
+      const profile = await res.json();
+      setOverview((cur) => (cur ? { ...cur, profile } : cur));
+      setAutoSendBusy(false);
+    } catch {
+      setAutoSendBusy(false);
     }
   };
 
@@ -1794,12 +1886,14 @@ export default function Forge() {
             <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
           )}
 
-          {(consoleScreen === "roster" || consoleScreen === "inbox") && (() => {
+          {(consoleScreen === "roster" || consoleScreen === "inbox" || consoleScreen === "drafts") && (() => {
             const inboxUnread = inbox.reduce((s, r) => s + r.unread, 0);
+            const draftsPending = drafts.length;
             return (
               <div style={{ display: "flex", gap: 8, padding: "14px 20px 0" }}>
-                {[["roster", "Roster"], ["inbox", "Inbox"]].map(([key, label]) => {
+                {[["roster", "Roster"], ["inbox", "Inbox"], ["drafts", "Drafts"]].map(([key, label]) => {
                   const sel = consoleScreen === key;
+                  const badgeN = key === "inbox" ? inboxUnread : key === "drafts" ? draftsPending : 0;
                   return (
                     <button key={key} onClick={() => setConsoleScreen(key)} aria-pressed={sel}
                       style={{ flex: 1, background: sel ? "rgba(41,171,226,.08)" : C.surface2,
@@ -1807,11 +1901,11 @@ export default function Forge() {
                         padding: "10px 0", fontSize: 12.5, fontWeight: 600, color: sel ? C.energy : C.body,
                         display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {label}
-                      {key === "inbox" && inboxUnread > 0 && (
-                        <span aria-label={`${inboxUnread} unread`}
+                      {badgeN > 0 && (
+                        <span aria-label={`${badgeN} ${key === "inbox" ? "unread" : "pending"}`}
                           style={{ minWidth: 16, height: 16, borderRadius: 999, background: C.energy, color: C.inkOnEnergy,
                             fontSize: 9.5, fontWeight: 700, lineHeight: "16px", textAlign: "center", padding: "0 4px" }}>
-                          {inboxUnread > 9 ? "9+" : inboxUnread}
+                          {badgeN > 9 ? "9+" : badgeN}
                         </span>
                       )}
                     </button>
@@ -1885,6 +1979,23 @@ export default function Forge() {
                     <>
                       <h1 className="ff-d" style={{ fontSize: 30, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "10px 0 0", lineHeight: 1.05 }}>{u.name}</h1>
                       <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{u.email}</div>
+
+                      {/* U7 (ask 33): per-athlete auto-send toggle. */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16, padding: "14px 16px", background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14 }}>
+                        <div>
+                          <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>Auto-send Kyle replies</div>
+                          <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>Skip approval for routine AI drafts</div>
+                        </div>
+                        <button onClick={() => toggleAutoSend(u.id, !overview.profile?.kyleAutoSend)} disabled={autoSendBusy}
+                          aria-pressed={!!overview.profile?.kyleAutoSend} aria-label="Toggle auto-send Kyle replies"
+                          style={{ width: 46, height: 26, borderRadius: 999, position: "relative", flexShrink: 0,
+                            border: `1px solid ${overview.profile?.kyleAutoSend ? "rgba(41,171,226,.55)" : C.line}`,
+                            background: overview.profile?.kyleAutoSend ? "rgba(41,171,226,.25)" : C.surface2,
+                            opacity: autoSendBusy ? .6 : 1 }}>
+                          <span style={{ position: "absolute", top: 2, left: overview.profile?.kyleAutoSend ? 22 : 2, width: 20, height: 20, borderRadius: "50%",
+                            background: overview.profile?.kyleAutoSend ? C.energy : C.muted, transition: "left .15s" }} />
+                        </button>
+                      </div>
 
                       <Label>Readiness trend</Label>
                       <Card>
@@ -2176,6 +2287,10 @@ export default function Forge() {
                           <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
                             <div style={{ maxWidth: "82%", background: mine ? "rgba(41,171,226,.13)" : C.surface2,
                               border: `1px solid ${mine ? "rgba(41,171,226,.35)" : C.line}`, borderRadius: 14, padding: "10px 13px" }}>
+                              {m.ai_generated && (
+                                <span style={{ display: "inline-block", marginBottom: 5, fontSize: 9, fontWeight: 700, letterSpacing: ".04em",
+                                  color: C.energy, background: "rgba(41,171,226,.15)", borderRadius: 999, padding: "2px 6px" }}>AI</span>
+                              )}
                               <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.5 }}>{m.body}</div>
                               <div style={{ color: C.muted, fontSize: 10.5, marginTop: 4 }}>
                                 {new Date(m.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
@@ -2200,6 +2315,67 @@ export default function Forge() {
                     </div>
                   </div>
                 </Card>
+              </div>
+            )}
+
+            {/* DRAFTS (U7, ask 33) */}
+            {consoleScreen === "drafts" && (
+              <div>
+                <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>Drafts</h1>
+                <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 16px" }}>{drafts.length} pending</div>
+                {draftsError && <div style={{ color: C.energy, fontSize: 12.5, marginBottom: 12 }}>{draftsError}</div>}
+                {draftsBusy ? (
+                  <div style={{ color: C.muted, fontSize: 13 }}>Loading…</div>
+                ) : (
+                  <Card style={{ padding: 0 }}>
+                    {drafts.length === 0 ? (
+                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>No pending drafts.</div>
+                    ) : drafts.map((d, i) => (
+                      <button key={d.id} onClick={() => openDraft(d)}
+                        style={{ width: "100%", background: "none", border: "none", textAlign: "left", padding: 16,
+                          display: "flex", alignItems: "center", gap: 12,
+                          borderBottom: i < drafts.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                        <div style={ava}>{(d.user.name || d.user.email)[0].toUpperCase()}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                            <div style={{ color: C.text, fontSize: 14.5, fontWeight: 600 }}>{d.user.name}</div>
+                            <div style={{ color: C.muted, fontSize: 10.5, flexShrink: 0 }}>{relativeDay(d.created_at)}</div>
+                          </div>
+                          <div style={{ color: C.energy, fontSize: 11, fontWeight: 600, marginTop: 2 }}>{d.trigger_summary}</div>
+                          <div style={{ color: C.muted, fontSize: 12, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.body}</div>
+                        </div>
+                        <ChevronRight size={16} color={C.muted} />
+                      </button>
+                    ))}
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {/* DRAFT DETAIL (U7, ask 33) */}
+            {consoleScreen === "draftDetail" && selectedDraft && (
+              <div>
+                <button onClick={backFromDraft}
+                  style={{ background: "none", border: "none", color: C.muted, fontSize: 13, padding: "8px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                  <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Back to drafts
+                </button>
+                <h1 className="ff-d" style={{ fontSize: 28, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "8px 0 0" }}>{selectedDraft.user.name}</h1>
+                <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{selectedDraft.trigger_summary}</div>
+
+                <Label>Draft reply</Label>
+                <textarea aria-label="Draft body" value={draftBody} onChange={(e) => setDraftBody(e.target.value)} rows={6}
+                  style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 14,
+                    padding: 14, fontSize: 14, color: C.text, fontFamily: "inherit", lineHeight: 1.5, resize: "vertical" }} />
+
+                {draftActionError && <div style={{ color: C.energy, fontSize: 12.5, marginTop: 8 }}>{draftActionError}</div>}
+                <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                  <button onClick={rejectDraft} disabled={draftActionBusy}
+                    style={{ ...btnG, flex: 1, opacity: draftActionBusy ? .6 : 1 }}>Reject</button>
+                  <button onClick={approveDraft} disabled={draftActionBusy || !draftBody.trim()}
+                    style={{ ...btnP, flex: 1, opacity: draftActionBusy || !draftBody.trim() ? .6 : 1 }}>
+                    {draftActionBusy ? "Sending…" : "Approve & send"}
+                  </button>
+                </div>
               </div>
             )}
           </div>

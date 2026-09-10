@@ -52,6 +52,20 @@ function isValidBlocks(blocks) {
   return Array.isArray(blocks) && blocks.every(isValidBlock);
 }
 
+const MAX_DRAFT_BODY_LEN = 2000;
+
+// U7 (ask 33): trigger_type -> a one-line context summary for the console
+// ("Check-in · score 48" / "Workout · <title> · N sets" / "Manual").
+function draftTriggerSummary(row) {
+  if (row.trigger_type === "checkin") return `Check-in · score ${row.checkin_score}`;
+  if (row.trigger_type === "workout_log") {
+    const title = row.workout_title || "Freeform workout";
+    const n = row.workout_set_count ?? 0;
+    return `Workout · ${title} · ${n} set${n === 1 ? "" : "s"}`;
+  }
+  return "Manual";
+}
+
 export function createAdminRouter(pool) {
   const router = Router();
   const requireUser = makeRequireUser(pool);
@@ -277,6 +291,145 @@ export function createAdminRouter(pool) {
     } catch (err) {
       if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
       console.error(`assignment patch error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // ---- AI Kyle drafts (U7, ask 33) ----
+
+  // GET /admin/drafts -- pending drafts, oldest first, each with the athlete's
+  // name/email, trigger type, created_at, and a one-line trigger context
+  // summary (joins checkins/workout_logs by trigger_id, matched by trigger_type
+  // so the join only ever hits one side).
+  router.get("/admin/drafts", requireUser, requireAdmin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT d.id, d.trigger_type, d.trigger_id, d.body, d.created_at,
+                u.id AS user_id, u.name AS user_name, u.email AS user_email,
+                c.score AS checkin_score,
+                w.title AS workout_title,
+                (SELECT COUNT(*)::int FROM workout_log_sets s WHERE s.log_id = d.trigger_id) AS workout_set_count
+         FROM ai_drafts d
+         JOIN users u ON u.id = d.user_id
+         LEFT JOIN checkins c ON d.trigger_type = 'checkin' AND c.id = d.trigger_id
+         LEFT JOIN workout_logs wl ON d.trigger_type = 'workout_log' AND wl.id = d.trigger_id
+         LEFT JOIN workout_assignments wa ON wa.id = wl.assignment_id
+         LEFT JOIN workouts w ON w.id = wa.workout_id
+         WHERE d.status = 'pending'
+         ORDER BY d.created_at ASC`
+      );
+      const drafts = rows.map((r) => ({
+        id: r.id,
+        trigger_type: r.trigger_type,
+        body: r.body,
+        created_at: r.created_at,
+        user: { id: r.user_id, name: r.user_name, email: r.user_email },
+        trigger_summary: draftTriggerSummary(r),
+      }));
+      res.status(200).json(drafts);
+    } catch (err) {
+      console.error(`admin drafts query error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // PATCH /admin/drafts/:id {body} -- edit a pending draft's body. 404 unless pending.
+  router.patch("/admin/drafts/:id", requireUser, requireAdmin, async (req, res) => {
+    const raw = req.body?.body;
+    const body = typeof raw === "string" ? raw.trim() : "";
+    if (!body || body.length > MAX_DRAFT_BODY_LEN) {
+      return res.status(400).json({ error: "invalid draft body" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE ai_drafts SET body = $1 WHERE id = $2 AND status = 'pending'
+         RETURNING id, trigger_type, trigger_id, body, status, created_at`,
+        [body, req.params.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "not_found" });
+      res.status(200).json(rows[0]);
+    } catch (err) {
+      if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
+      console.error(`draft patch error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // POST /admin/drafts/:id/approve -- one transaction: insert the kyle
+  // message (ai_generated true, body = the draft's CURRENT body, so an edit
+  // just before approving is honored), draft -> sent + sent_message_id.
+  // 404 unless pending. Returns the message row.
+  router.post("/admin/drafts/:id/approve", requireUser, requireAdmin, async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: draftRows } = await client.query(
+        `SELECT id, user_id, body FROM ai_drafts WHERE id = $1 AND status = 'pending' FOR UPDATE`,
+        [req.params.id]
+      );
+      if (draftRows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "not_found" });
+      }
+      const draft = draftRows[0];
+      const { rows: msgRows } = await client.query(
+        `INSERT INTO messages (user_id, sender, body, ai_generated)
+         VALUES ($1, 'kyle', $2, true)
+         RETURNING id, sender, body, ai_generated, created_at`,
+        [draft.user_id, draft.body]
+      );
+      await client.query(
+        `UPDATE ai_drafts SET status = 'sent', sent_message_id = $1, decided_at = now() WHERE id = $2`,
+        [msgRows[0].id, draft.id]
+      );
+      await client.query("COMMIT");
+      res.status(200).json(msgRows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
+      console.error(`draft approve error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /admin/drafts/:id/reject -- 404 unless pending.
+  router.post("/admin/drafts/:id/reject", requireUser, requireAdmin, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `UPDATE ai_drafts SET status = 'rejected', decided_at = now() WHERE id = $1 AND status = 'pending'
+         RETURNING id, trigger_type, trigger_id, status, decided_at`,
+        [req.params.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "not_found" });
+      res.status(200).json(rows[0]);
+    } catch (err) {
+      if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
+      console.error(`draft reject error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // PATCH /admin/users/:id/settings {kyleAutoSend: boolean} -- accepts ONLY
+  // this one key (400 otherwise); merges into users.profile the same way
+  // data.js's /profile route does for athlete-writable fields.
+  router.patch("/admin/users/:id/settings", requireUser, requireAdmin, async (req, res) => {
+    const body = req.body ?? {};
+    const keys = Object.keys(body);
+    if (keys.length !== 1 || keys[0] !== "kyleAutoSend" || typeof body.kyleAutoSend !== "boolean") {
+      return res.status(400).json({ error: "invalid settings" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE users SET profile = profile || $1::jsonb WHERE id = $2 RETURNING profile`,
+        [{ kyleAutoSend: body.kyleAutoSend }, req.params.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "not_found" });
+      res.status(200).json(rows[0].profile);
+    } catch (err) {
+      if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
+      console.error(`admin settings patch error: ${err.message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });

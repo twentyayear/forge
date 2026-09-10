@@ -5,6 +5,7 @@
 import express from "express";
 import { Router } from "express";
 import { makeRequireUser } from "./authz.js";
+import { createDraftGenerator } from "./ai.js";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PROFILE_WHITELIST = ["bodyweight", "fuelTargets", "coach", "device"];
@@ -40,6 +41,10 @@ function whitelistedProfileFields(body) {
 export function createDataRouter(pool) {
   const router = Router();
   const requireUser = makeRequireUser(pool);
+  // U7 (ask 33): AI Kyle draft generation, triggered fire-and-forget below
+  // after a checkin/workout-log POST. Instantiated once per app -- this is
+  // where ai.js's one-time "ANTHROPIC_API_KEY missing" boot log line fires.
+  const generateDraft = createDraftGenerator(pool);
 
   router.get("/bootstrap", requireUser, async (req, res) => {
     try {
@@ -141,6 +146,9 @@ export function createDataRouter(pool) {
         [req.user.id, day, score, answers]
       );
       res.status(200).json(rows[0]);
+      // Fire-and-forget AI Kyle draft (ask 33) -- generateDraft catches and
+      // logs every failure internally, so it can never affect this 2xx.
+      setImmediate(() => generateDraft({ userId: req.user.id, triggerType: "checkin", triggerId: rows[0].id }));
     } catch (err) {
       if (isDbInputError(err)) return res.status(400).json({ error: "invalid checkin data" });
       console.error(`checkin upsert error: ${err.message}`);
@@ -242,6 +250,8 @@ export function createDataRouter(pool) {
 
       await client.query("COMMIT");
       res.status(201).json({ ...log, sets: insertedSets });
+      // Fire-and-forget AI Kyle draft (ask 33) -- see the checkins route above.
+      setImmediate(() => generateDraft({ userId: req.user.id, triggerType: "workout_log", triggerId: log.id }));
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       if (isDbInputError(err)) return res.status(400).json({ error: "invalid workout log data" });
