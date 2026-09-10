@@ -35,22 +35,32 @@ function dayStr(v) {
 
 // Pull one real number out of the context so the test-mode fake body can
 // prove it cited the athlete's actual data (per the ask's green-light: "draft
-// cites GL's actual score/numbers").
+// cites GL's actual score/numbers"). Defensive on context.trigger's shape
+// (U8, ask 34): generateFromContext's monitor/weekly contexts carry no
+// `trigger` at all, so this must degrade to 0 rather than throw -- the
+// checkin/workout_log branches below are untouched from ask 33.
 function citableNumber(context) {
-  if (context.trigger.type === "checkin") return context.trigger.score;
-  const withWeight = (context.trigger.sets || []).find((s) => s.weight_lbs != null);
+  const t = context?.trigger;
+  if (!t) return 0;
+  if (t.type === "checkin") return t.score;
+  const withWeight = (t.sets || []).find((s) => s.weight_lbs != null);
   if (withWeight) return Number(withWeight.weight_lbs);
-  return context.trigger.sets?.[0]?.reps ?? 0;
+  return t.sets?.[0]?.reps ?? 0;
 }
 
-// callClaude(userContent, context) -> string body, or null on failure/disabled.
-// Throws only in NODE_ENV=test when testControls.forceFailure is set (so
-// generateDraft's own try/catch can be exercised) -- the real production path
-// never throws outward, per the ask's hard rule.
-async function callClaude(userContent, context) {
+// callClaude(userContent, context, systemPrompt?) -> string body, or null on
+// failure/disabled. Throws only in NODE_ENV=test when testControls.forceFailure
+// is set (so generateDraft's own try/catch, and U8's per-user job try/catch,
+// can be exercised) -- the real production path never throws outward from
+// here, per the ask's hard rule.
+//
+// systemPrompt defaults to SYSTEM_PROMPT so every ask-33 call site
+// (callClaude(userContent, context)) is byte-for-byte unchanged; U8's
+// generateFromContext (ask 34) is the only caller that passes a third arg.
+async function callClaude(userContent, context, systemPrompt = SYSTEM_PROMPT) {
   if (process.env.NODE_ENV === "test") {
     if (testControls.forceFailure) throw new Error("simulated claude api failure");
-    calls.push({ system: SYSTEM_PROMPT, userContent });
+    calls.push({ system: systemPrompt, userContent });
     const n = citableNumber(context);
     return `Solid work — that ${n} is real progress. Keep the streak going.`;
   }
@@ -64,7 +74,7 @@ async function callClaude(userContent, context) {
       model: MODEL,
       max_tokens: MAX_TOKENS,
       output_config: { effort: "low" },
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: "user", content: userContent }],
     });
     const block = (res.content || []).find((b) => b.type === "text");
@@ -193,4 +203,82 @@ export function createDraftGenerator(pool) {
       console.error(`ai draft generation error: status=${err.status ?? "n/a"} message=${err.message}`);
     }
   };
+}
+
+// ---- U8 (ask 34): automation jobs' message/draft path ----
+
+const MONITOR_SYSTEM_SUFFIX = `
+
+This particular message is an automated daily monitor nudge, not a reply to a
+specific checkin or workout log. The DATA below is a JSON object with a
+"findings" array covering this ONE athlete's last week -- entries can be
+missed workouts (type "missed_workout", with the scheduled dates/titles) and/or
+a readiness slump (type "readiness_slump", with the real mean scores). Write
+ONE short message covering ALL the findings together (never one message per
+finding), citing the real numbers/dates from the DATA.`;
+
+const WEEKLY_SYSTEM_SUFFIX = `
+
+This particular message is an automated weekly recap, not a reply to a
+specific checkin or workout log. The DATA below is a JSON object summarizing
+ONE athlete's last 7 days: workouts completed vs assigned, checkin count and
+mean score, total volume lifted (reps x weight), and fuel days logged. Write
+ONE short recap citing the real numbers from the DATA.`;
+
+const MONITOR_SYSTEM_PROMPT = SYSTEM_PROMPT + MONITOR_SYSTEM_SUFFIX;
+const WEEKLY_SYSTEM_PROMPT = SYSTEM_PROMPT + WEEKLY_SYSTEM_SUFFIX;
+
+// generateFromContext(pool, {userId, kind, context, triggerId}) -> {mode, ...}.
+// Reuses callClaude()/SYSTEM_PROMPT exactly like generateDraft does, with a
+// kind-specific instruction suffix ('monitor' | 'weekly'). Applies the SAME
+// auto-send rule as generateDraft (profile.kyleAutoSend), writing trigger_type
+// 'manual' (triggerId is null for these -- there's no single checkin/log row
+// behind an automated nudge or recap).
+//
+// Unlike generateDraft, this THROWS on a generation or DB failure -- jobs.js's
+// per-user try/catch is the thing that's supposed to catch it and count it as
+// one error in the run summary, per the ask's "one athlete's failure never
+// aborts the others" rule. generateDraft's own contract (swallow, log, never
+// throw outward) is untouched.
+export async function generateFromContext(pool, { userId, kind, context, triggerId = null }) {
+  const systemPrompt = kind === "weekly" ? WEEKLY_SYSTEM_PROMPT : MONITOR_SYSTEM_PROMPT;
+
+  const body = await callClaude(JSON.stringify(context), context, systemPrompt);
+  if (!body) {
+    // API/parse failure already logged inside callClaude (status+message only).
+    throw new Error(`generateFromContext: claude generation failed for user ${userId} (kind=${kind})`);
+  }
+
+  const userResult = await pool.query(`SELECT profile FROM users WHERE id = $1`, [userId]);
+  const profile = userResult.rows[0]?.profile ?? {};
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (profile.kyleAutoSend === true) {
+      const { rows: msgRows } = await client.query(
+        `INSERT INTO messages (user_id, sender, body, ai_generated) VALUES ($1, 'kyle', $2, true) RETURNING id`,
+        [userId, body]
+      );
+      await client.query(
+        `INSERT INTO ai_drafts (user_id, trigger_type, trigger_id, body, status, sent_message_id, decided_at)
+         VALUES ($1, 'manual', $2, $3, 'sent', $4, now())`,
+        [userId, triggerId, body, msgRows[0].id]
+      );
+      await client.query("COMMIT");
+      return { mode: "sent", messageId: msgRows[0].id };
+    }
+
+    await client.query(
+      `INSERT INTO ai_drafts (user_id, trigger_type, trigger_id, body) VALUES ($1, 'manual', $2, $3)`,
+      [userId, triggerId, body]
+    );
+    await client.query("COMMIT");
+    return { mode: "draft" };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }

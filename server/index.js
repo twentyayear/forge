@@ -1,5 +1,6 @@
 import pg from "pg";
 import { createApp } from "./app.js";
+import { startScheduler } from "./scheduler.js";
 
 const { Pool } = pg;
 
@@ -30,3 +31,11 @@ const app = createApp(pool);
 app.listen(port, () => {
   console.log(`workhart-api listening on ${port}`);
 });
+
+// U8 (ask 34): pg-boss must never start under the test runner (app.js is
+// imported by every test file; this is the one place that isn't). A
+// scheduler start failure is logged inside startScheduler and never thrown --
+// the API keeps serving either way.
+if (process.env.NODE_ENV !== "test") {
+  startScheduler(pool);
+}

@@ -6,6 +6,13 @@
 // validated to exist before use.
 import { Router } from "express";
 import { makeRequireUser, requireAdmin } from "./authz.js";
+import { JOB_HANDLERS } from "./jobs.js";
+import { generateFromContext } from "./ai.js";
+
+// U8 (ask 34): the real deps for a manually-triggered job run -- same
+// generateFromContext the scheduler uses, so a manual run behaves identically
+// to a scheduled one.
+const JOB_DEPS = { generateFromContext };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -430,6 +437,24 @@ export function createAdminRouter(pool) {
     } catch (err) {
       if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
       console.error(`admin settings patch error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // ---- Automation jobs (U8, ask 34) ----
+
+  // POST /admin/jobs/:name/run -- names limited to the two registered jobs
+  // (anything else 404s, same "don't advertise" spirit as requireAdmin).
+  // Runs the handler inline (not via pg-boss) and returns its summary; this
+  // is what the green-light drives, and how Kyle re-runs after a failure.
+  router.post("/admin/jobs/:name/run", requireUser, requireAdmin, async (req, res) => {
+    const handler = JOB_HANDLERS[req.params.name];
+    if (!handler) return res.status(404).json({ error: "not_found" });
+    try {
+      const summary = await handler(pool, JOB_DEPS, { now: new Date() });
+      res.status(200).json(summary);
+    } catch (err) {
+      console.error(`admin job run error (${req.params.name}): ${err.message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });
