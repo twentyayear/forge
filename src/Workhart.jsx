@@ -4,6 +4,7 @@ import {
   ChevronDown, ChevronRight, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
   Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings, Lock,
 } from "lucide-react";
+import { realHistory, averageScore, buildServerHistoryCsv } from "./history.js";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
 
 // ---- Tokens ----
@@ -370,6 +371,7 @@ function buildSchedule() {
 }
 const EX_BASE = Object.fromEntries(EX_LIB.map((e) => [e.name, e.base]));
 const SCHEDULE = buildSchedule();
+const DEVICE_OPTIONS = ["Samsung Galaxy Watch", "Apple Watch", "Garmin", "Whoop", "Fitbit", "Oura Ring", "Polar", "No device"];
 
 // ---- History export (CSV) ----
 const csvField = (v) => {
@@ -614,17 +616,17 @@ const FUEL_QUICK = [
   { name: "Greek yogurt", kcal: 150, protein: 15, carbs: 9, fat: 4 },
 ];
 function loadFuelLog() {
-  try { return JSON.parse(localStorage.getItem("forge.fuelLog")) || {}; } catch (e) { return {}; }
+  try { return JSON.parse(localStorage.getItem("workhart.fuelLog")) || {}; } catch (e) { return {}; }
 }
-function saveFuelLog(log) { localStorage.setItem("forge.fuelLog", JSON.stringify(log)); }
+function saveFuelLog(log) { localStorage.setItem("workhart.fuelLog", JSON.stringify(log)); }
 const DEFAULT_FUEL_TARGETS = { kcal: 2400, protein: 160 };
 function loadFuelTargets() {
   try {
-    const v = JSON.parse(localStorage.getItem("forge.fuelTargets"));
+    const v = JSON.parse(localStorage.getItem("workhart.fuelTargets"));
     return v && typeof v === "object" ? { ...DEFAULT_FUEL_TARGETS, ...v } : { ...DEFAULT_FUEL_TARGETS };
   } catch (e) { return { ...DEFAULT_FUEL_TARGETS }; }
 }
-function saveFuelTargets(t) { localStorage.setItem("forge.fuelTargets", JSON.stringify(t)); }
+function saveFuelTargets(t) { localStorage.setItem("workhart.fuelTargets", JSON.stringify(t)); }
 
 // ---- Server API (server mode only) ----
 // Thin fetch wrapper — same-origin cookie session, JSON body when present.
@@ -743,11 +745,12 @@ const PROGRAM_40 = Array.from({ length: 40 }, (_, i) => {
 });
 
 // ---- App ----
-export default function Forge() {
+export default function Workhart() {
   const [screen, setScreen] = useState(SERVER_MODE ? "boot" : "login");
   // ---- Server mode: auth + hydration state (unused, harmless, in prototype mode) ----
   const [authStage, setAuthStage] = useState("email"); // "email" | "sent"
   const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [authExpired, setAuthExpired] = useState(false);
@@ -755,6 +758,7 @@ export default function Forge() {
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
   const [serverUser, setServerUser] = useState(null); // bootstrap `user` row (server mode)
   const [serverAssignments, setServerAssignments] = useState([]); // bootstrap `assignments`
+  const [serverLogs, setServerLogs] = useState([]); // bootstrap `workoutLogs`
   // ---- Server mode: messaging (U6, ask 32) ----
   const [unreadMessages, setUnreadMessages] = useState(0); // bootstrap count, zeroed after the athlete's own read POST
   const [threadMessages, setThreadMessages] = useState([]);
@@ -814,13 +818,13 @@ export default function Forge() {
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
   const [foodUnavailable, setFoodUnavailable] = useState(false);
-  const [device, setDevice] = useState(() => localStorage.getItem("forge.device") || "");
+  const [device, setDevice] = useState(() => localStorage.getItem("workhart.device") || "");
   const [pickingDevice, setPickingDevice] = useState(false);
   const [survey, setSurvey] = useState({});
   const [checkStep, setCheckStep] = useState(0);
   const [readyToday, setReadyToday] = useState(() => {
     try {
-      const s = JSON.parse(localStorage.getItem(`forge.readiness.${iso(TODAY)}`));
+      const s = JSON.parse(localStorage.getItem(`workhart.readiness.${iso(TODAY)}`));
       return s?.score ?? READINESS_TODAY;
     } catch { return READINESS_TODAY; }
   });
@@ -829,6 +833,8 @@ export default function Forge() {
     [readyToday, serverCheckins]
   );
   const recentAvg = recentAvgFor(readinessSeries);
+  const baselineAvg = SERVER_MODE ? (averageScore(serverCheckins) ?? readyToday) : longAvg;
+  const histFor = (name) => SERVER_MODE ? realHistory(name, serverLogs) : exHistory(name);
   const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
   const [active, setActive] = useState(null);        // { i, done }
@@ -855,7 +861,7 @@ export default function Forge() {
   const [voiceOn, setVoiceOn] = useState(true);
   const [talking, setTalking] = useState(false);
   const [coach, setCoach] = useState(() => {
-    const s = localStorage.getItem("forge.coach");
+    const s = localStorage.getItem("workhart.coach");
     return s && s !== "Mike Torres" ? s : "Kyle";
   });
   const [showSettings, setShowSettings] = useState(false);
@@ -881,7 +887,7 @@ export default function Forge() {
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
   const [bodyweight, setBodyweight] = useState(() => {
-    const v = parseInt(localStorage.getItem("forge.bodyweight"), 10);
+    const v = parseInt(localStorage.getItem("workhart.bodyweight"), 10);
     return Number.isFinite(v) ? v : 180;
   });
   const [fuelGoal, setFuelGoal] = useState("maintain"); // cut | maintain | build
@@ -944,6 +950,7 @@ export default function Forge() {
       return;
     }
     setServerAssignments(data.assignments || []);
+    setServerLogs(data.workoutLogs || []);
     setUnreadMessages(Number.isFinite(data.unreadMessages) ? data.unreadMessages : 0);
     setFuelLog(fuelRowsToLog(data.fuel || []));
     if (profile.fuelTargets && typeof profile.fuelTargets === "object") {
@@ -959,7 +966,7 @@ export default function Forge() {
     setReadyToday(todayEntry ? todayEntry.score : READINESS_TODAY);
 
     const hasAnyData = (data.checkins || []).length > 0 || (data.fuel || []).length > 0;
-    if (!hasAnyData && localStorage.getItem("forge.importDismissed") !== "1") {
+    if (!hasAnyData && localStorage.getItem("workhart.importDismissed") !== "1") {
       setScreen("import");
     } else if (todayEntry) {
       setScreen("app");
@@ -1350,7 +1357,7 @@ export default function Forge() {
 
   const openReadiness = () => {
     setShowReadiness(true);
-    speak(`Readiness ${readyToday}. ${recentAvg >= longAvg ? "Trending above your baseline — green light to push." : "A touch under baseline — keep the top sets honest."}`);
+    speak(`Readiness ${readyToday}. ${recentAvg >= baselineAvg ? "Trending above your baseline — green light to push." : "A touch under baseline — keep the top sets honest."}`);
   };
 
   const openExercise = (name) => { setExDetail(name); setExTab("history"); };
@@ -1372,8 +1379,8 @@ export default function Forge() {
       const prevProtein = prevRows.reduce((s, e) => s + (e.protein || 0), 0);
       const newProtein = dayLog.reduce((s, e) => s + (e.protein || 0), 0);
       if (day === iso(TODAY) && prevProtein < fuelTargets.protein && newProtein >= fuelTargets.protein) {
-        if (localStorage.getItem("forge.proteinSpokeDay") !== day) {
-          localStorage.setItem("forge.proteinSpokeDay", day);
+        if (localStorage.getItem("workhart.proteinSpokeDay") !== day) {
+          localStorage.setItem("workhart.proteinSpokeDay", day);
           speak(`Protein target hit — ${fuelTargets.protein} grams down. That's how you build.`);
         }
       }
@@ -1454,7 +1461,7 @@ export default function Forge() {
   const changeBodyweight = async (v) => {
     if (!SERVER_MODE) {
       setBodyweight(v);
-      localStorage.setItem("forge.bodyweight", String(v));
+      localStorage.setItem("workhart.bodyweight", String(v));
       return;
     }
     const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ bodyweight: v }) });
@@ -1462,6 +1469,14 @@ export default function Forge() {
     if (!res.ok) { setWriteError("Couldn't save bodyweight — try again."); return; }
     const profile = await res.json();
     setBodyweight(profile.bodyweight);
+    setWriteError("");
+  };
+  const changeDevice = async (v) => {
+    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ device: v }) });
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't save device — try again."); return; }
+    const profile = await res.json();
+    setDevice(profile.device);
     setWriteError("");
   };
   const calcTargets = async () => {
@@ -1488,7 +1503,7 @@ export default function Forge() {
   // show the inline note without fighting the user's typing.
   const changeCoach = async (v) => {
     setCoach(v);
-    if (!SERVER_MODE) { localStorage.setItem("forge.coach", v); return; }
+    if (!SERVER_MODE) { localStorage.setItem("workhart.coach", v); return; }
     const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ coach: v }) });
     if (res.status === 401) return goSignedOut();
     if (!res.ok) { setWriteError("Couldn't save coach name — try again."); return; }
@@ -1498,10 +1513,10 @@ export default function Forge() {
     const checkins = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith("forge.readiness.")) continue;
+      if (!key || !key.startsWith("workhart.readiness.")) continue;
       try {
         const v = JSON.parse(localStorage.getItem(key));
-        if (v && typeof v.score === "number" && v.answers) checkins[key.slice("forge.readiness.".length)] = { score: v.score, answers: v.answers };
+        if (v && typeof v.score === "number" && v.answers) checkins[key.slice("workhart.readiness.".length)] = { score: v.score, answers: v.answers };
       } catch {}
     }
     const payload = { checkins, fuelLog, bodyweight, fuelTargets, coach, device };
@@ -1518,7 +1533,7 @@ export default function Forge() {
     goSignedOut();
   };
   const skipImport = () => {
-    localStorage.setItem("forge.importDismissed", "1");
+    localStorage.setItem("workhart.importDismissed", "1");
     setScreen(serverCheckins[iso(TODAY)] ? "app" : "survey");
   };
   const handleImportFile = async (e) => {
@@ -1663,6 +1678,25 @@ export default function Forge() {
         }
         setAuthBusy(false);
       };
+      const submitPassword = async () => {
+        const email = authEmail.trim();
+        if (!email || !authPassword) return;
+        const password = authPassword;
+        setAuthBusy(true);
+        setAuthError("");
+        try {
+          const res = await apiCall("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+          setAuthPassword("");
+          if (res.ok) { await refetchBootstrap(); }
+          else if (res.status === 401) setAuthError("Wrong email or password.");
+          else if (res.status === 429) setAuthError("Too many attempts — try again later.");
+          else setAuthError("Something went wrong — try again.");
+        } catch {
+          setAuthPassword("");
+          setAuthError("Something went wrong — try again.");
+        }
+        setAuthBusy(false);
+      };
       return (
         <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <style>{css}</style>
@@ -1682,14 +1716,22 @@ export default function Forge() {
 
             {authStage === "email" ? (
               <>
-                <input aria-label="Email" placeholder="Email" type="email" value={authEmail}
+                <input aria-label="Email" placeholder="Email" type="email" autoComplete="username" value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") submitEmail(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") submitPassword(); }}
+                  style={inp} />
+                <input aria-label="Password" placeholder="Password" type="password" autoComplete="current-password" value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submitPassword(); }}
                   style={inp} />
                 {authError && <div style={{ color: C.energy, fontSize: 12, marginBottom: 10 }}>{authError}</div>}
+                <button onClick={submitPassword} disabled={authBusy || !authEmail.trim() || !authPassword}
+                  style={{ ...btnP, width: "100%", marginTop: 6, opacity: authBusy || !authEmail.trim() || !authPassword ? .5 : 1 }}>
+                  {authBusy ? "Signing in…" : "Sign in"}
+                </button>
                 <button onClick={submitEmail} disabled={authBusy || !authEmail.trim()}
-                  style={{ ...btnP, width: "100%", marginTop: 6, opacity: authBusy || !authEmail.trim() ? .5 : 1 }}>
-                  {authBusy ? "Sending…" : "Email me a sign-in link"}
+                  style={{ background: "none", border: "none", color: C.muted, fontSize: 12, textDecoration: "underline", padding: 0, display: "block", margin: "14px auto 0", opacity: authBusy || !authEmail.trim() ? .5 : 1 }}>
+                  Email me a sign-in link instead
                 </button>
               </>
             ) : (
@@ -1731,22 +1773,15 @@ export default function Forge() {
             <select
               aria-label="Fitness device"
               value={device}
-              onChange={(e) => { const v = e.target.value; localStorage.setItem("forge.device", v); setDevice(v); setPickingDevice(false); }}
+              onChange={(e) => { const v = e.target.value; localStorage.setItem("workhart.device", v); setDevice(v); setPickingDevice(false); }}
               style={{ ...inp, color: device ? C.text : C.muted }}
             >
               <option value="" disabled>Connect your fitness device…</option>
-              <option value="Samsung Galaxy Watch">Samsung Galaxy Watch</option>
-              <option value="Apple Watch">Apple Watch</option>
-              <option value="Garmin">Garmin</option>
-              <option value="Whoop">Whoop</option>
-              <option value="Fitbit">Fitbit</option>
-              <option value="Oura Ring">Oura Ring</option>
-              <option value="Polar">Polar</option>
-              <option value="No device">No device</option>
+              {DEVICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           )}
 
-          <button onClick={() => { const todayKey = `forge.readiness.${iso(TODAY)}`; setScreen(localStorage.getItem(todayKey) ? "app" : "survey"); }} style={{ ...btnP, width: "100%", marginTop: 6 }}>Sign in</button>
+          <button onClick={() => { const todayKey = `workhart.readiness.${iso(TODAY)}`; setScreen(localStorage.getItem(todayKey) ? "app" : "survey"); }} style={{ ...btnP, width: "100%", marginTop: 6 }}>Sign in</button>
         </div>
       </div>
     );
@@ -1804,7 +1839,7 @@ export default function Forge() {
         speak(`Readiness logged at ${row.score}. ${row.score >= 75 ? "Green light — we push today." : row.score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
         return;
       }
-      const todayKey = `forge.readiness.${iso(TODAY)}`;
+      const todayKey = `workhart.readiness.${iso(TODAY)}`;
       localStorage.setItem(todayKey, JSON.stringify({ score, answers: finalAnswers }));
       setReadyToday(score);
       setScreen("app");
@@ -2811,12 +2846,14 @@ export default function Forge() {
                       <span style={{ color: C.muted }}>Last </span>{last}
                     </button>
                   )}
-                  <button onClick={() => openExercise(ex.name)} style={chipStyle}>
-                    <span style={{ color: C.muted }}>PR </span>{exHistory(ex.name).pr.label}
-                  </button>
-                  {!bw && (
+                  {histFor(ex.name) && (
                     <button onClick={() => openExercise(ex.name)} style={chipStyle}>
-                      <span style={{ color: C.muted }}>Max </span>{maxes[ex.name] ?? exHistory(ex.name).baseMax} lb
+                      <span style={{ color: C.muted }}>PR </span>{histFor(ex.name).pr.label}
+                    </button>
+                  )}
+                  {!bw && (maxes[ex.name] ?? histFor(ex.name)?.baseMax) != null && (
+                    <button onClick={() => openExercise(ex.name)} style={chipStyle}>
+                      <span style={{ color: C.muted }}>Max </span>{maxes[ex.name] ?? histFor(ex.name)?.baseMax} lb
                     </button>
                   )}
                 </div>
@@ -3166,7 +3203,7 @@ export default function Forge() {
               </Card>
 
               <button onClick={() => {
-                  const csv = buildHistoryCsv(log, doneToday);
+                  const csv = SERVER_MODE ? buildServerHistoryCsv(serverLogs, serverAssignments) : buildHistoryCsv(log, doneToday);
                   const blob = new Blob([csv], { type: "text/csv" });
                   const a = document.createElement("a");
                   a.href = URL.createObjectURL(blob);
@@ -3430,13 +3467,13 @@ export default function Forge() {
             <div style={{ display: "flex", marginTop: 18 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: ".1em", fontWeight: 600 }}>Long-term average</div>
-                <div className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.text, marginTop: 4 }}>{longAvg}</div>
+                <div className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.text, marginTop: 4 }}>{baselineAvg}</div>
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: ".1em", fontWeight: 600 }}>Recent average</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                   <span className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.recovery }}>{recentAvg}</span>
-                  {recentAvg >= longAvg
+                  {recentAvg >= baselineAvg
                     ? <TrendingUp size={18} color={C.recovery} />
                     : <TrendingDown size={18} color={C.recovery} />}
                 </div>
@@ -3458,7 +3495,7 @@ export default function Forge() {
             <div style={{ display: "flex", gap: 12, marginTop: 18 }}>
               <div style={ava}>{coachInitial}</div>
               <div style={{ flex: 1, background: C.surface2, borderRadius: 14, padding: "10px 14px", color: C.body, fontSize: 13, lineHeight: 1.55 }}>
-                {recentAvg >= longAvg
+                {recentAvg >= baselineAvg
                   ? "Your readiness is trending higher than usual. Recovering is part of training — and you're doing it well."
                   : "Your readiness is trending lower than usual — ease off the accessories today."}
               </div>
@@ -3573,26 +3610,36 @@ export default function Forge() {
                     <Award size={18} color={C.energy} />
                     <span style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em", fontWeight: 600 }}>Personal record</span>
                   </div>
-                  <div className="ff-d" style={{ fontSize: 24, fontWeight: 700, color: C.text, marginTop: 6 }}>{exHistory(exDetail).pr.label}</div>
-                  <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>{exHistory(exDetail).pr.date}</div>
+                  {histFor(exDetail) ? (
+                    <>
+                      <div className="ff-d" style={{ fontSize: 24, fontWeight: 700, color: C.text, marginTop: 6 }}>{histFor(exDetail).pr.label}</div>
+                      <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>{histFor(exDetail).pr.date}</div>
+                    </>
+                  ) : (
+                    <div className="ff-d" style={{ fontSize: 18, fontWeight: 700, color: C.muted, marginTop: 6 }}>No logged sets yet</div>
+                  )}
                 </div>
 
                 <div style={{ marginTop: 12 }}>
                   <Stepper label="Working max" unit="lb" step={5}
-                    value={maxes[exDetail] ?? exHistory(exDetail).baseMax}
+                    value={maxes[exDetail] ?? histFor(exDetail)?.baseMax ?? 0}
                     onChange={(v) => setMaxes({ ...maxes, [exDetail]: v })} />
                 </div>
 
-                <Label>Estimated 1-rep max</Label>
-                <div style={{ height: 160 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={exHistory(exDetail).series}>
-                      <Line type="monotone" dataKey="lb" stroke={C.energy} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-                      <XAxis dataKey="wk" stroke={C.muted} fontSize={10} tickLine={false} axisLine={false} />
-                      <YAxis hide domain={["dataMin - 10", "dataMax + 10"]} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                {histFor(exDetail)?.series.length >= 2 && (
+                  <>
+                    <Label>Estimated 1-rep max</Label>
+                    <div style={{ height: 160 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={histFor(exDetail).series}>
+                          <Line type="monotone" dataKey="lb" stroke={C.energy} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                          <XAxis dataKey="wk" stroke={C.muted} fontSize={10} tickLine={false} axisLine={false} />
+                          <YAxis hide domain={["dataMin - 10", "dataMax + 10"]} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -3662,7 +3709,14 @@ export default function Forge() {
                 </button>
               )}
               {SERVER_MODE && (
-                <button onClick={handleSignOut} style={{ ...btnG, width: "100%", marginTop: 16 }}>Sign out</button>
+                <div style={{ marginTop: 16 }}>
+                  <Label>Fitness device</Label>
+                  <select aria-label="Fitness device" value={device} onChange={(e) => changeDevice(e.target.value)} style={{ ...inp, color: device ? C.text : C.muted }}>
+                    <option value="" disabled>Connect your fitness device…</option>
+                    {DEVICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <button onClick={handleSignOut} style={{ ...btnG, width: "100%", marginTop: 4 }}>Sign out</button>
+                </div>
               )}
             </div>
           </Sheet>

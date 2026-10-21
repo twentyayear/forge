@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { Router } from "express";
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import { sendMagicLink } from "./mail.js";
+import { hashPassword, verifyPassword } from "./password.js";
 import { hashToken, parseCookies, SESSION_COOKIE, makeRequireUser } from "./authz.js";
 
 const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
@@ -16,9 +17,31 @@ function genRawToken() {
   return crypto.randomBytes(32).toString("base64url");
 }
 
+// Verified against when the account is missing / has no password, so response
+// timing doesn't reveal whether an account exists.
+const DUMMY_HASH = await hashPassword(genRawToken());
+
 export function createAuthRouter(pool) {
   const router = Router();
   const requireUser = makeRequireUser(pool);
+
+  async function issueSession(res, userId) {
+    const sessionRaw = genRawToken();
+    const sessionHash = hashToken(sessionRaw);
+    const sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MS);
+    await pool.query(`INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`, [
+      userId,
+      sessionHash,
+      sessionExpiresAt,
+    ]);
+    res.cookie(SESSION_COOKIE, sessionRaw, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_TTL_MS,
+    });
+  }
 
   // 20/hour per IP.
   const requestLinkIpLimiter = rateLimit({
@@ -49,6 +72,50 @@ export function createAuthRouter(pool) {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "too_many_requests" },
+  });
+
+  // 30/hour per IP.
+  const loginIpLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "too_many_requests" },
+  });
+
+  // 10/hour per email (falls back to IP if the body has no email yet).
+  const loginEmailLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) =>
+      typeof req.body?.email === "string" && req.body.email.trim()
+        ? req.body.email.trim().toLowerCase()
+        : ipKeyGenerator(req.ip),
+    message: { error: "too_many_requests" },
+  });
+
+  router.post("/login", loginIpLimiter, loginEmailLimiter, async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const password = req.body?.password;
+    if (!email || typeof password !== "string" || !password) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+
+    try {
+      const { rows } = await pool.query(`SELECT id, password_hash FROM users WHERE email = $1`, [email]);
+      const user = rows[0];
+      const ok = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
+      if (!user || !user.password_hash || !ok) {
+        return res.status(401).json({ error: "invalid_credentials" });
+      }
+      await issueSession(res, user.id);
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      console.error(`login error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
   });
 
   // Always 200 {ok:true}, whether or not the account exists — no oracle.
@@ -98,22 +165,7 @@ export function createAuthRouter(pool) {
 
       await pool.query(`UPDATE magic_link_tokens SET used_at = now() WHERE id = $1`, [row.id]);
 
-      const sessionRaw = genRawToken();
-      const sessionHash = hashToken(sessionRaw);
-      const sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MS);
-      await pool.query(`INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`, [
-        row.user_id,
-        sessionHash,
-        sessionExpiresAt,
-      ]);
-
-      res.cookie(SESSION_COOKIE, sessionRaw, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "lax",
-        path: "/",
-        maxAge: SESSION_TTL_MS,
-      });
+      await issueSession(res, row.user_id);
 
       res.redirect(302, "/");
     } catch (err) {
