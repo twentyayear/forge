@@ -73,9 +73,12 @@ export function createDataRouter(pool) {
           // still show, without dragging in the user's whole assignment history.
           pool.query(
             `SELECT wa.id, wa.scheduled_for, wa.status,
-                    w.id AS workout_id, w.title AS workout_title, w.notes AS workout_notes, w.blocks AS workout_blocks
+                    w.id AS workout_id, w.title AS workout_title, w.notes AS workout_notes, w.blocks AS workout_blocks,
+                    p.title AS program_title
              FROM workout_assignments wa
              JOIN workouts w ON w.id = wa.workout_id
+             LEFT JOIN program_enrollments pe ON pe.id = wa.program_enrollment_id
+             LEFT JOIN programs p ON p.id = pe.program_id
              WHERE wa.user_id = $1 AND wa.scheduled_for >= CURRENT_DATE - 7
              ORDER BY wa.scheduled_for ASC`,
             [req.user.id]
@@ -114,6 +117,7 @@ export function createDataRouter(pool) {
         scheduled_for: a.scheduled_for,
         status: a.status,
         workout: { id: a.workout_id, title: a.workout_title, notes: a.workout_notes, blocks: a.workout_blocks },
+        program_title: a.program_title ?? null,
       }));
 
       res.status(200).json({

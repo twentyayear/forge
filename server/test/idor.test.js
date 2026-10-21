@@ -96,6 +96,14 @@ const MATRIX = [
   { method: "GET", path: "/api/admin/inbox", access: "admin" },
   { method: "GET", path: "/api/admin/users/:id/messages", access: "admin" },
   { method: "POST", path: "/api/admin/users/:id/messages", access: "admin" },
+  { method: "POST", path: "/api/admin/programs", access: "admin" },
+  { method: "GET", path: "/api/admin/programs", access: "admin" },
+  { method: "GET", path: "/api/admin/programs/:id", access: "admin" },
+  { method: "PATCH", path: "/api/admin/programs/:id", access: "admin" },
+  { method: "DELETE", path: "/api/admin/programs/:id", access: "admin" },
+  { method: "POST", path: "/api/admin/programs/:id/enroll", access: "admin" },
+  { method: "POST", path: "/api/admin/assignments/bulk", access: "admin" },
+  { method: "GET", path: "/api/admin/calendar", access: "admin" },
 ];
 
 // Walks the express 4 router stack: direct routes, then mounted routers
@@ -166,8 +174,8 @@ test("inventory matches the matrix exactly", () => {
     { unlisted: [], missing: [] },
     `routes served but not in matrix: ${JSON.stringify(unlisted)}; matrix entries not served: ${JSON.stringify(missing)}`
   );
-  assert.equal(actual.length, 35);
-  assert.equal(MATRIX.length, 35);
+  assert.equal(actual.length, 43);
+  assert.equal(MATRIX.length, 43);
 });
 
 test("inventory catches drift", () => {

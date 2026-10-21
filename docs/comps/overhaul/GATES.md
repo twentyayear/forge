@@ -27,3 +27,9 @@
 - Trap: in zsh an unquoted `$VAR` holding two `K=V` pairs is ONE word, so `env $R node ...` set nothing and every test refused to run (fail 83). Export the vars instead.
 - Security read: roster/overview/settings/workouts/assignments/drafts/inbox/threads all carry `req.user.id`; add-client inserts `trainer_id = req.user.id`, 409 on a global email match, rate-limited per trainer, mail failure logged not fatal.
 - Deviations accepted: two roster assertions flipped (the admin row is no longer in the roster, by design); tests split finer.
+- Ship: main `79150d0`; deploy OK; prod migration `1790100000000_trainer-tenancy` applied; users admin 1 (trainer_id 0), user 4 (trainer_id 4); health `db:true`. Netlify prototype: deploy state ready from branch `prototype` @ `54525c5`, site 200.
+
+## W.2 programs and bundles — GREEN (sonnet, first attempt)
+- Builder: 91/91 (the ask's "pass >= 95" was Fable's miscount: 83 + 8 new = 91). Fable re-run: migrate down/up clean; `# tests 91 # pass 91 # fail 0`; build passes.
+- Security read: every route checks `programs.trainer_id`, `workouts.created_by` or `users.trainer_id` against `req.user.id` before BEGIN; enrol and bulk use `ON CONFLICT DO NOTHING`; delete relies on the no-cascade FK (409).
+- Deviations accepted: non-uuid ids 404; PATCH description null clears; calendar 400 body `invalid_query`.
