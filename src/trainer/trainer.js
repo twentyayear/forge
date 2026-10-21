@@ -42,3 +42,83 @@ export function trendPoints(checkins, days, today) {
   }
   return out;
 }
+
+// THE LEGACY BUILDER'S MAPPING: A BLANK WEIGHT IS null (BODYWEIGHT), REPS ARE AT LEAST 1, rest_sec AND note ARE SENT ONLY WHEN THE TRAINER FILLED THEM.
+export function blocksFromEditor(exercises) {
+  return (exercises || []).map((e) => {
+    const block = {
+      exercise_key: e.exercise_key,
+      sets: (e.sets || []).map((s) => ({
+        reps: Math.max(1, parseInt(s.reps, 10) || 1),
+        weight_lbs: s.weight_lbs === "" || s.weight_lbs == null || !Number.isFinite(Number(s.weight_lbs)) ? null : Number(s.weight_lbs),
+      })),
+    };
+    if (e.rest_sec !== "" && e.rest_sec != null && Number.isFinite(Number(e.rest_sec))) block.rest_sec = Number(e.rest_sec);
+    if (e.note && String(e.note).trim()) block.note = String(e.note).trim();
+    return block;
+  });
+}
+
+// CLIENTS WHOSE DRAFT TEXT IS IDENTICAL SHARE ONE BROADCAST; ORDER OF FIRST APPEARANCE IS KEPT AND BLANK DRAFTS ARE LEFT OUT.
+export function groupByBody(drafts) {
+  const groups = [];
+  for (const d of drafts || []) {
+    const body = String(d.body ?? "").trim();
+    if (!body) continue;
+    const hit = groups.find((g) => g.body === body);
+    if (hit) hit.user_ids.push(d.user_id);
+    else groups.push({ body, user_ids: [d.user_id] });
+  }
+  return groups;
+}
+
+// DOLLARS TYPED BY THE TRAINER TO INTEGER CENTS; ANYTHING UNREADABLE OR NEGATIVE IS 0.
+export function dollarsToCents(text) {
+  const n = parseFloat(String(text ?? "").replace(/[$,\s]/g, ""));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n * 100);
+}
+
+// "$45" FOR WHOLE DOLLARS, "$45.50" OTHERWISE, "No price" FOR ZERO.
+export function priceLabel(cents) {
+  const n = Number(cents);
+  if (!Number.isFinite(n) || n <= 0) return "No price";
+  return n % 100 === 0 ? `$${n / 100}` : `$${(n / 100).toFixed(2)}`;
+}
+
+// A REST DAY HAS NO WORKOUT; EVERY OTHER DAY IS ONE SESSION.
+export function programSessionCount(days) {
+  return (days || []).filter((d) => d.workout_id != null && d.workout_id !== "").length;
+}
+
+// THE LIST WITH THE ITEM AT index SWAPPED ONE STEP (dir -1 UP, +1 DOWN); OUT OF RANGE RETURNS THE LIST UNCHANGED.
+export function moveItem(list, index, dir) {
+  const to = index + dir;
+  if (index < 0 || index >= list.length || to < 0 || to >= list.length) return list;
+  const next = list.slice();
+  [next[index], next[to]] = [next[to], next[index]];
+  return next;
+}
+
+// "now", "5m", "3h", "2d", THEN A SHORT DATE; now IS PASSED IN SO TESTS OWN THE CLOCK.
+export function ageLabel(ts, now = new Date()) {
+  const ms = new Date(now).getTime() - new Date(ts).getTime();
+  if (!Number.isFinite(ms)) return "";
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  if (min < 1440) return `${Math.floor(min / 60)}h`;
+  if (min < 10080) return `${Math.floor(min / 1440)}d`;
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// THE INBOX TAB BADGE: EVERY UNREAD THREAD COUNT PLUS THE DRAFTS WAITING.
+export function inboxBadge(rows, drafts) {
+  const unread = (rows || []).reduce((n, r) => n + (Number(r.unread) || 0), 0);
+  return unread + (drafts ? drafts.length : 0);
+}
+
+// A COUNT THE SERVER MAY SEND AS A NUMBER OR AS A LIST.
+export function countOf(v) {
+  return Array.isArray(v) ? v.length : Number(v) || 0;
+}

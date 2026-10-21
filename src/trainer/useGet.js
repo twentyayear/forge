@@ -24,3 +24,5 @@ export function useGet(path, onSignedOut, pick = (d) => d) {
 
   return { ...state, reload: load };
 }
+
+export const pickArray = (d) => (Array.isArray(d) ? d : null);

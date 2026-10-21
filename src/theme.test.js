@@ -27,27 +27,21 @@ const SPEECH = "speech" + "Synthesis";
 const BANNED = ["SERVER" + "_MODE", "VITE_SERVER" + "_MODE", "READINESS" + "_TODAY", "build" + "Schedule("];
 const SCHEDULE_WORD = new RegExp("\\b" + "SCHED" + "ULE" + "\\b");
 const HEX = /#[0-9a-fA-F]{3,8}\b/;
-const HEX_ALL = new RegExp(HEX.source, "g");
 
 const srcFiles = walk(SRC, [".js", ".jsx"]);
-// TEMPORARY: src/Workhart.jsx IS EXCLUDED FROM THE PATH LISTS WHILE IT EXISTS, AND HELD TO ZERO BY ITS OWN ASSERTIONS.
-// W.10 DELETES THE FILE AND THIS EXCLUSION WITH IT.
-const LEGACY = join(SRC, "Workhart.jsx");
 
 test("no hex colour literal outside src/theme.js", () => {
   const offenders = srcFiles
-    .filter((p) => p !== join(SRC, "theme.js") && p !== LEGACY)
+    .filter((p) => p !== join(SRC, "theme.js"))
     .filter((p) => HEX.test(read(p)));
   assert.deepEqual(offenders.map(rel), []);
-  if (existsSync(LEGACY)) assert.equal((read(LEGACY).match(HEX_ALL) || []).length, 0, "src/Workhart.jsx holds a hex literal");
 });
 
 test("no fetch outside src/lib/api.js", () => {
   const offenders = srcFiles
-    .filter((p) => p !== join(SRC, "lib", "api.js") && p !== LEGACY)
+    .filter((p) => p !== join(SRC, "lib", "api.js"))
     .filter((p) => read(p).includes(FETCH));
   assert.deepEqual(offenders.map(rel), []);
-  if (existsSync(LEGACY)) assert.equal(read(LEGACY).includes(FETCH), false, "src/Workhart.jsx calls fetch");
 });
 
 test("no browser speech synthesis anywhere in src, public or server", () => {

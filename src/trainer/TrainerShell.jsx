@@ -2,12 +2,17 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ClipboardList, Inbox, Tag, User, Users } from "lucide-react";
 import { T } from "../theme.js";
 import { Card, TabBar, Toast } from "../ui/index.js";
-import { LegacyShell } from "../app/LegacyShell.jsx";
 import { kicker, muted } from "../client/styles.js";
 import { useRoster } from "./useRoster.js";
 import { Roster } from "./Roster.jsx";
 import { Client } from "./Client.jsx";
 import { AddClientSheet } from "./AddClientSheet.jsx";
+import { Build } from "./Build.jsx";
+import { Inbox as InboxScreen } from "./Inbox.jsx";
+import { Offers } from "./Offers.jsx";
+import { You } from "./You.jsx";
+import { pickArray, useGet } from "./useGet.js";
+import { inboxBadge } from "./trainer.js";
 
 const ITEMS = [
   { id: "roster", label: "Roster", icon: Users },
@@ -36,7 +41,7 @@ export function TrainerShell({ session, onSignedOut }) {
   const wide = useWide();
   const [tab, setTab] = useState("roster");
   const [clientId, setClientId] = useState(null);
-  const [inboxView, setInboxView] = useState("inbox");
+  const [nav, setNav] = useState({ view: "inbox", thread: null, compose: false });
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState("");
   const clearToast = useCallback(() => setToast(""), []);
@@ -49,12 +54,28 @@ export function TrainerShell({ session, onSignedOut }) {
     if (tab === "roster") reloadRoster();
   }, [tab, reloadRoster]);
 
-  const unread = roster.data ? roster.data.needsYou.filter((e) => e.kind === "unread").reduce((n, e) => n + e.count, 0) : 0;
-  const select = (id) => { if (id === "inbox") setInboxView("inbox"); setTab(id); };
-  const openDrafts = () => { setInboxView("drafts"); setTab("inbox"); };
+  // THE INBOX TAB BADGE: UNREAD THREADS PLUS DRAFTS WAITING, FETCHED ONCE ON MOUNT AND AGAIN EACH TIME THE TAB OPENS.
+  const inbox = useGet("/api/admin/inbox", onSignedOut, pickArray);
+  const drafts = useGet("/api/admin/drafts", onSignedOut, pickArray);
+  const reloadInbox = inbox.reload;
+  const reloadDrafts = drafts.reload;
+  const seen = useRef(false);
+  useEffect(() => {
+    if (!seen.current) { seen.current = true; return; }
+    if (tab === "inbox") { reloadInbox(); reloadDrafts(); }
+  }, [tab, reloadInbox, reloadDrafts]);
+  const changed = useCallback(() => { reloadRoster(); reloadInbox(); reloadDrafts(); }, [reloadRoster, reloadInbox, reloadDrafts]);
+  const badge = inboxBadge(inbox.data, drafts.data);
+  const select = (id) => { if (id === "inbox") setNav({ view: "inbox", thread: null, compose: false }); setTab(id); };
+  const openDrafts = () => { setNav({ view: "drafts", thread: null, compose: false }); setTab("inbox"); };
+  const openThread = (thread) => { setNav({ view: "inbox", thread, compose: false }); setTab("inbox"); };
+  const patchNav = (patch) => setNav((cur) => ({ ...cur, ...patch }));
+  const clients = roster.data ? roster.data.clients : null;
 
   const frame = { minHeight: "100dvh", background: T.color.bg, color: T.color.body, fontFamily: T.font.body };
   const pad = { padding: `${T.space[4]}px ${T.space[4]}px calc(${T.space[8] * 3}px + env(safe-area-inset-bottom))` };
+
+  const narrowMain = { ...pad, maxWidth: 430, margin: "0 auto" };
 
   let body;
   if (tab === "roster") {
@@ -77,33 +98,29 @@ export function TrainerShell({ session, onSignedOut }) {
     ) : (
       <main style={{ ...pad, maxWidth: 430, margin: "0 auto" }}>{clientEl || rosterEl}</main>
     );
-  } else if (tab === "offers") {
+  } else if (tab === "build") {
+    body = <main style={narrowMain}><Build clients={clients} onSignedOut={onSignedOut} notify={setToast} /></main>;
+  } else if (tab === "inbox") {
     body = (
-      <main style={{ ...pad, maxWidth: 430, margin: "0 auto" }}>
-        <Card style={{ padding: T.space[4] }}>
-          <p style={kicker}>Offers</p>
-          <p style={{ ...muted, margin: `${T.space[2]}px 0 0`, fontSize: T.type.body }}>Offers arrive in the next unit.</p>
-        </Card>
+      <main style={narrowMain}>
+        <InboxScreen nav={nav} onNav={patchNav} inbox={inbox} drafts={drafts} clients={clients} onChanged={changed} onSignedOut={onSignedOut} notify={setToast} />
       </main>
     );
+  } else if (tab === "offers") {
+    body = <main style={narrowMain}><Offers onSignedOut={onSignedOut} notify={setToast} onOpenThread={openThread} /></main>;
   } else {
-    const view = tab === "inbox" ? inboxView : tab;
-    body = (
-      <div style={{ paddingBottom: `calc(${T.space[8] * 2}px + env(safe-area-inset-bottom))` }}>
-        <LegacyShell mode="trainer" session={session} onSignedOut={onSignedOut} view={view} />
-      </div>
-    );
+    body = <main style={narrowMain}><You session={session} onSignedOut={onSignedOut} /></main>;
   }
 
   return (
     <div style={frame}>
       {body}
-      <TabBar label="Trainer" items={ITEMS.map((i) => (i.id === "inbox" ? { ...i, badge: unread } : i))} active={tab} onSelect={select} />
+      <TabBar label="Trainer" items={ITEMS.map((i) => (i.id === "inbox" ? { ...i, badge } : i))} active={tab} onSelect={select} />
       {adding && (
         <AddClientSheet onClose={() => setAdding(false)} onSignedOut={onSignedOut}
           onAdded={(email) => { setAdding(false); setToast(`Link sent to ${email}`); reloadRoster(); }} />
       )}
-      <Toast message={toast} tone="good" onDone={clearToast} />
+      <Toast message={toast} tone={/^Couldn't/.test(toast) ? "warn" : "good"} onDone={clearToast} />
     </div>
   );
 }

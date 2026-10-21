@@ -1,23 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { T } from "../theme.js";
 import { Button, Card, Chip, Header, Ring, Sheet, Toast } from "../ui/index.js";
 import { call, post } from "../client/net.js";
 import { dayOf, todayStr } from "../client/engine.js";
-import { groupByDay, timeLabel } from "../client/coach.js";
 import { field, fieldLabel, kicker, muted } from "../client/styles.js";
 import { iso } from "../data/dates.js";
 import { useGet } from "./useGet.js";
+import { Switch } from "./parts.jsx";
+import { Thread } from "./Thread.jsx";
 import { trendPoints, weekRange } from "./trainer.js";
 
-const MAX_LEN = 2000;
 const LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const parse = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const addDays = (s, n) => { const d = parse(s); return iso(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n)); };
 const shortDate = (s) => parse(dayOf(s)).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 const pickArray = (d) => (Array.isArray(d) ? d : null);
-const pickThread = (d) => (d && Array.isArray(d.messages) ? d : null);
 const pickOverview = (d) => (d && d.user && Array.isArray(d.checkins) ? d : null);
 
 const CELL = {
@@ -34,22 +33,6 @@ function cellState(a, day, today) {
   if (a.status === "completed") return "done";
   if (a.status === "skipped") return "skipped";
   return day < today ? "missed" : "assigned";
-}
-
-function Switch({ on, onChange, label, hint, busy }) {
-  return (
-    <button type="button" role="switch" aria-checked={on} className="wh-btn" disabled={busy} onClick={() => onChange(!on)}
-      style={{ display: "flex", alignItems: "center", gap: T.space[3], width: "100%", minHeight: 56, padding: `${T.space[2]}px ${T.space[3]}px`, textAlign: "left", cursor: "pointer", font: "inherit",
-        background: T.color.surface, border: `1px solid ${T.color.line}`, borderRadius: T.radius.card, color: T.color.text }}>
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontWeight: 600 }}>{label}</span>
-        {hint && <span style={{ ...muted, display: "block" }}>{hint}</span>}
-      </span>
-      <span aria-hidden="true" style={{ width: 48, height: 28, borderRadius: 14, flexShrink: 0, position: "relative", background: on ? T.color.energy : T.color.surface2, border: `1px solid ${on ? T.color.energy : T.color.lineStrong}` }}>
-        <span style={{ position: "absolute", top: 2, left: on ? 22 : 2, width: 22, height: 22, borderRadius: "50%", background: on ? T.color.inkOnEnergy : T.color.muted, transition: "left .15s ease-out" }} />
-      </span>
-    </button>
-  );
 }
 
 function PickList({ items, selectedId, onPick, render, label }) {
@@ -150,66 +133,6 @@ function EnrolSheet({ clientId, today, onClose, onDone, onSignedOut }) {
         <Button full busy={busy} onClick={submit}>Enrol</Button>
       </div>
     </Sheet>
-  );
-}
-
-function Bubble({ m }) {
-  const kyle = m.sender === "kyle";
-  return (
-    <div style={{ marginLeft: kyle ? "auto" : 0, marginRight: kyle ? 0 : "auto", maxWidth: "85%", textAlign: kyle ? "right" : "left" }}>
-      <div style={{ display: "inline-block", textAlign: "left", background: kyle ? T.color.energyDeep : T.color.surface2, color: kyle ? T.color.onDeep : T.color.text,
-        borderRadius: T.radius.card, padding: `${T.space[2]}px ${T.space[3]}px`, fontSize: T.type.body, lineHeight: 1.4, overflowWrap: "anywhere", whiteSpace: "pre-wrap", opacity: m.pending ? 0.7 : 1 }}>
-        {m.body}
-      </div>
-      <div style={{ color: T.color.muted, fontSize: T.type.label }}>{m.pending ? "Sending" : timeLabel(m.created_at)}</div>
-    </div>
-  );
-}
-
-function Thread({ clientId, onSignedOut, onRead }) {
-  const thread = useGet(`/api/admin/users/${clientId}/messages`, onSignedOut, pickThread);
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [err, setErr] = useState("");
-  const endRef = useRef(null);
-  const messages = thread.data ? thread.data.messages : [];
-  const groups = useMemo(() => groupByDay(messages), [messages]);
-  const marked = thread.data ? thread.data.marked : 0;
-  useEffect(() => { if (marked > 0) onRead(); }, [marked]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (endRef.current) endRef.current.scrollTop = endRef.current.scrollHeight; }, [messages.length]);
-
-  const text = draft.trim();
-  const can = text.length >= 1 && text.length <= MAX_LEN && !sending;
-  const send = async (e) => {
-    e.preventDefault();
-    if (!can) return;
-    setSending(true); setErr("");
-    const res = await post(`/api/admin/users/${clientId}/messages`, { body: text }, onSignedOut);
-    if (res.ok) { setDraft(""); await thread.reload(); } else setErr("Couldn't send. Your message is still here.");
-    setSending(false);
-  };
-
-  return (
-    <Card style={{ padding: T.space[3], display: "grid", gap: T.space[3] }}>
-      <div ref={endRef} role="log" aria-label="Conversation" style={{ display: "grid", gap: T.space[3], maxHeight: 360, overflowY: "auto", alignContent: "start" }}>
-        {!thread.data && thread.loading && <p role="status" style={muted}>Loading</p>}
-        {!thread.data && thread.error && <p role="alert" style={{ ...muted, color: T.color.warn }}>Couldn't load the conversation.</p>}
-        {thread.data && messages.length === 0 && <p style={muted}>No messages yet.</p>}
-        {groups.map((g) => (
-          <div key={g.key} style={{ display: "grid", gap: T.space[2] }}>
-            <h3 style={{ ...kicker, textAlign: "center" }}>{g.label}</h3>
-            {g.messages.map((m) => <Bubble key={m.id} m={m} />)}
-          </div>
-        ))}
-      </div>
-      <form onSubmit={send} style={{ display: "flex", gap: T.space[2], alignItems: "flex-end" }}>
-        <textarea className="wh-field" rows={2} value={draft} maxLength={MAX_LEN} aria-label="Message this client" placeholder="Message this client"
-          onChange={(e) => setDraft(e.target.value)}
-          style={{ ...field, flex: 1, minWidth: 0, minHeight: 48, padding: T.space[3], resize: "vertical", lineHeight: "22px" }} />
-        <Button type="submit" disabled={!can} busy={sending} style={{ minHeight: 48 }}>Send</Button>
-      </form>
-      {err && <p role="alert" style={{ margin: 0, color: T.color.warn, fontSize: T.type.small }}>{err}</p>}
-    </Card>
   );
 }
 

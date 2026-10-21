@@ -78,3 +78,9 @@
 - Builder: build ok, 37/37 frontend, grep 0, detector `[]`, server 124/124. Fable re-run identical.
 - Read: `GET /admin/roster` joins every source through `users.trainer_id = $1`.
 - Deviations accepted: overview's real shape is `assignments` (ask said upcoming/past); program titles via the calendar; `forcedView` also takes `drafts`; builder gained an "Assign to" select in forced mode.
+- Ship: main `e7bff22`; deploy OK. LIVE WALK as `kyle@alphaecho.io` (minted link): Roster shows "Needs you · 29 drafts" (pending AI drafts accumulated by the jobs), Everyone · 4 (GL, the two poison-verify rows, Sam), each "No session scheduled · On track"; GL's client page shows the week strip with today's completed session, the readiness trend (5 weeks), Next/Recent sessions, the conversation. No overflow. Add-client walk recorded below.
+- Add client live (W.9 acceptance): Kyle added `hey+w9@blueroutevineyard.com` from the Roster sheet → row `role user`, `trainer_id` = Kyle, one `magic_link_tokens` row, API journal `resend send attempt ok: message_id=01a15f54-…`; the roster read Everyone · 5 with "W9 Walk" on it. The sign-in from that inbox is Sam's to click.
+
+## W.10 trainer rest — GREEN (sonnet, first attempt)
+- Builder: build ok, 44/44 frontend, both legacy files gone, references 0, grep 0, detector `[]`, server tree untouched. Fable re-run identical plus server 124/124 and the detector `[]` over all of `src/`.
+- Deviations accepted: Build/Inbox/Offers/You keep the 430 px column at laptop width (Roster alone is two-column); the In-app channel chip is fixed on; more than 5 recipients disables per-client AI drafting.
