@@ -258,7 +258,9 @@ function activeWorkoutFromAssignment(w) {
 
 // ---- App ----
 // SIGN-IN LIVES IN src/app/App.jsx; THIS COMPONENT STARTS FROM A SESSION AND HANDS 401s BACK THROUGH onSignedOut.
-export default function Workhart({ session, onSignedOut }) {
+// forcedTab ("coach" | "fuel" | "you") RENDERS ONLY THAT TAB FOR THE NEW CLIENT SHELL: NO SURVEY, NO LEGACY HEADER ROW, NO LEGACY TAB BAR.
+// voiceOn / onVoiceChange LET THE SHELL OWN THE VOICE SWITCH, BECAUSE THE SERVER PROFILE WHITELIST CANNOT STORE IT.
+export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voiceOnProp, onVoiceChange }) {
   const [screen, setScreen] = useState("boot");
   const [writeError, setWriteError] = useState("");
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
@@ -333,7 +335,7 @@ export default function Workhart({ session, onSignedOut }) {
   const recentAvg = recentAvgFor(readinessSeries);
   const baselineAvg = averageScore(serverCheckins) ?? readyToday;
   const histFor = (name) => realHistory(name, serverLogs);
-  const [tab, setTab] = useState("today");
+  const [tab, setTab] = useState(forcedTab ?? "today");
   const [selDay, setSelDay] = useState(iso(TODAY));
   const [active, setActive] = useState(null);        // { i, done }
   const [grid, setGrid] = useState({});              // { [exIndex]: [{reps, w, done}] }
@@ -350,7 +352,8 @@ export default function Workhart({ session, onSignedOut }) {
   const [libQ, setLibQ] = useState("");
   const [libEq, setLibEq] = useState("All");
   const [maxes, setMaxes] = useState({});       // name -> working max lb
-  const [voiceOn, setVoiceOn] = useState(true);
+  const [voiceOn, setVoiceOnState] = useState(voiceOnProp ?? true);
+  const setVoiceOn = (v) => { setVoiceOnState(v); if (onVoiceChange) onVoiceChange(v); };
   const [talking, setTalking] = useState(false);
   const [coach, setCoach] = useState(() => {
     const s = localStorage.getItem("workhart.coach");
@@ -426,7 +429,7 @@ export default function Workhart({ session, onSignedOut }) {
     const todayEntry = cmap[iso(TODAY)];
     setReadyToday(todayEntry ? todayEntry.score : null);
 
-    if (todayEntry) {
+    if (todayEntry || forcedTab) {
       setScreen("app");
     } else {
       setScreen("survey");
@@ -1618,12 +1621,40 @@ export default function Workhart({ session, onSignedOut }) {
     );
   }
 
+  // THE SETTINGS CONTENT, SHARED BY THE LEGACY SHEET AND THE "you" TAB.
+  const settingsBody = (
+            <div style={{ marginTop: 18 }}>
+              <Label>Coach name</Label>
+              <input aria-label="Coach name" maxLength={40} style={inp} value={coach}
+                onChange={(e) => changeCoach(e.target.value)} />
+              <div style={{ color: C.muted, fontSize: 11.5, marginTop: -6, marginBottom: 16 }}>Shown wherever your coach appears — and spoken by the voice.</div>
+
+              <Card style={{ display: "flex", gap: 13, alignItems: "center" }}>
+                <div style={ava}>{coachInitial}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
+                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · WORKHART</div>
+                </div>
+              </Card>
+
+              <div style={{ marginTop: 16 }}>
+                  <Label>Fitness device</Label>
+                  <select aria-label="Fitness device" value={device} onChange={(e) => changeDevice(e.target.value)} style={{ ...inp, color: device ? C.text : C.muted }}>
+                    <option value="" disabled>Connect your fitness device…</option>
+                    {DEVICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <button onClick={handleSignOut} style={{ ...btnG, width: "100%", marginTop: 4 }}>Sign out</button>
+                </div>
+            </div>
+  );
+
   // ---- Shell ----
   return (
     <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", justifyContent: "center" }}>
       <style>{css}</style>
       <div style={{ width: "100%", maxWidth: 430, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
 
+        {!forcedTab && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
             <Mark height={30} />
@@ -1640,6 +1671,7 @@ export default function Workhart({ session, onSignedOut }) {
             </button>
           </div>
         </div>
+        )}
 
         {writeError && (
           <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
@@ -2241,6 +2273,18 @@ export default function Workhart({ session, onSignedOut }) {
             </div>
           )}
 
+          {/* YOU: THE SETTINGS CONTENT INLINE, PLUS THE VOICE SWITCH THE FORCED SHELL HAS NO HEADER FOR */}
+          {tab === "you" && (
+            <div>
+              <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>You</h1>
+              <button onClick={() => { setVoiceOn(!voiceOn); if (voiceOn) stopAudio(); }} aria-pressed={voiceOn}
+                style={{ ...btnG, width: "100%", marginTop: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: voiceOn ? C.energy : C.muted }}>
+                {voiceOn ? <Volume2 size={16} /> : <VolumeX size={16} />} Coach voice {voiceOn ? "on" : "off"}
+              </button>
+              {settingsBody}
+            </div>
+          )}
+
           {/* COACH */}
           {tab === "coach" && (
             <div>
@@ -2382,7 +2426,7 @@ export default function Workhart({ session, onSignedOut }) {
           )}
         </div>
 
-        {/* Nav */}
+        {!forcedTab && (
         <nav aria-label="Main" style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "rgba(10,10,11,.92)", backdropFilter: "blur(14px)", borderTop: `1px solid ${C.line}`, display: "flex", padding: "8px 8px calc(8px + env(safe-area-inset-bottom))" }}>
           {[
             ["today", "Today", Home],
@@ -2408,6 +2452,7 @@ export default function Workhart({ session, onSignedOut }) {
             </button>
           ))}
         </nav>
+        )}
 
         {showReadiness && (
           <Sheet title="Readiness" onClose={() => setShowReadiness(false)}>
@@ -2574,29 +2619,7 @@ export default function Workhart({ session, onSignedOut }) {
 
         {showSettings && (
           <Sheet title="Settings" onClose={() => setShowSettings(false)}>
-            <div style={{ marginTop: 18 }}>
-              <Label>Coach name</Label>
-              <input aria-label="Coach name" maxLength={40} style={inp} value={coach}
-                onChange={(e) => changeCoach(e.target.value)} />
-              <div style={{ color: C.muted, fontSize: 11.5, marginTop: -6, marginBottom: 16 }}>Shown wherever your coach appears — and spoken by the voice.</div>
-
-              <Card style={{ display: "flex", gap: 13, alignItems: "center" }}>
-                <div style={ava}>{coachInitial}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ color: C.text, fontSize: 15.5, fontWeight: 600 }}>{coachName}</div>
-                  <div style={{ color: C.muted, fontSize: 12.5 }}>Head Coach · WORKHART</div>
-                </div>
-              </Card>
-
-              <div style={{ marginTop: 16 }}>
-                  <Label>Fitness device</Label>
-                  <select aria-label="Fitness device" value={device} onChange={(e) => changeDevice(e.target.value)} style={{ ...inp, color: device ? C.text : C.muted }}>
-                    <option value="" disabled>Connect your fitness device…</option>
-                    {DEVICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                  <button onClick={handleSignOut} style={{ ...btnG, width: "100%", marginTop: 4 }}>Sign out</button>
-                </div>
-            </div>
+            {settingsBody}
           </Sheet>
         )}
       </div>

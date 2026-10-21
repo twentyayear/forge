@@ -58,3 +58,9 @@
 - Read: `speech.js` posts `{text, voice_id}` through `apiBlob`; `api.js` is the only fetch (same-origin credentials); `sw.js` returns early for `/api/`; `App.jsx` routes by `me.role`.
 - Traps recorded: zsh `--include=*.js` globbing fails without quotes (use `bash -c` or quote); Node 26 test output needs `--test-reporter=tap` when piped.
 - Open (loose ends for W.11): `netlify/` functions still in the tree (prototype branch keeps them; delete on `main` needs Sam's word); legacy Train shows "Push Day A" with no assignment until W.7; calendar strip DST duplicate-key bug (pre-existing) until W.7.
+
+## W.7 client core — GREEN (sonnet, first attempt)
+- Builder: build ok, 23/23 frontend, greps 0, detector `[]`, server 120/120. Fable re-run identical.
+- Read: `PATCH /workout-logs/:id` scoped by `user_id`, 404 on miss; the speaker is the only tts path; voice switch is browser-local (`workhart.voiceOn`) because the profile whitelist has no field (loose end).
+- Deviations accepted: `useBootstrap(session, onSignedOut)`; extra pure helpers; no remove-set; rest timer by end timestamp.
+- Live walk on alphaecho.io as the test client: recorded below.

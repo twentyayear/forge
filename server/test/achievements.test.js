@@ -252,3 +252,32 @@ test("tenancy: client B's bootstrap shows none of A's achievements", async () =>
   assert.ok((await bootstrap(a.cookie)).achievements.length > 0);
   assert.deepEqual((await bootstrap(b.cookie)).achievements, []);
 });
+
+test("PATCH /api/workout-logs/:id stores feel for the owner, 404s for another client, 400s on a bad value", async () => {
+  const a = await newClient("feelA");
+  const b = await newClient("feelB");
+  const log = await postLog(a.cookie, { sets: sets("squat", 5, 100) });
+  const patch = (cookie, id, body) =>
+    fetch(`${baseUrl}/api/workout-logs/${id}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(cookie), "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const feelOf = async () =>
+    (await pool.query(`SELECT feel FROM workout_logs WHERE id = $1`, [log.body.id])).rows[0].feel;
+
+  const ok = await patch(a.cookie, log.body.id, { feel: "hard" });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { id: log.body.id, feel: "hard" });
+  assert.equal(await feelOf(), "hard");
+
+  const other = await patch(b.cookie, log.body.id, { feel: "easy" });
+  assert.equal(other.status, 404);
+  assert.equal(await feelOf(), "hard");
+
+  const bad = await patch(a.cookie, log.body.id, { feel: "meh" });
+  assert.equal(bad.status, 400);
+  assert.equal(await feelOf(), "hard");
+
+  assert.equal((await patch(a.cookie, "not-a-uuid", { feel: "easy" })).status, 404);
+});

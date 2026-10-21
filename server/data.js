@@ -343,6 +343,26 @@ export function createDataRouter(pool) {
     }
   });
 
+  // THE FEEL TAP COMES AFTER THE LOG EXISTS; ONLY THE OWNER'S ROW CAN CHANGE, AND ANOTHER USER'S ID READS AS NOT FOUND.
+  router.patch("/workout-logs/:id", requireUser, async (req, res) => {
+    const { feel } = req.body ?? {};
+    if (!FEELS.includes(feel)) {
+      return res.status(400).json({ error: "invalid feel" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE workout_logs SET feel = $1 WHERE id = $2 AND user_id = $3 RETURNING id, feel`,
+        [feel, req.params.id, req.user.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "not_found" });
+      res.status(200).json(rows[0]);
+    } catch (err) {
+      if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
+      console.error(`workout log patch error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
   router.patch("/profile", requireUser, async (req, res) => {
     const fields = whitelistedProfileFields(req.body);
     if (fields === null || Object.keys(fields).length === 0) {
