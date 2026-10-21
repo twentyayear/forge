@@ -1,0 +1,503 @@
+<title>WORKHART Overhaul</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* LAYOUT: a one-column design board. Chrome is theme-aware; the phone frames carry their own fixed app tokens. */
+:root{
+  --bg:#f3f4f6; --fg:#15171a; --mute:#5c6370; --line:#d9dce2; --panel:#ffffff; --panel2:#e9ebef;
+  --blue:#1b8fc0; --blue-ink:#0f6c93; --warn:#b4541a; --ok:#1f7a4d;
+  --display:"Barlow Condensed", "Arial Narrow", sans-serif; --body:"Barlow", system-ui, sans-serif;
+  --plexd:"IBM Plex Sans Condensed", "Arial Narrow", sans-serif; --plex:"IBM Plex Sans", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#111214; --fg:#f1f2f4; --mute:#9aa1ad; --line:#2a2d33; --panel:#191b1f; --panel2:#22252b; --blue:#29ABE2; --blue-ink:#7ACBEF; --warn:#e3904f; --ok:#5fc48c; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#111214; --fg:#f1f2f4; --mute:#9aa1ad; --line:#2a2d33; --panel:#191b1f; --panel2:#22252b; --blue:#29ABE2; --blue-ink:#7ACBEF; --warn:#e3904f; --ok:#5fc48c; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.5;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:28px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.05}
+h1{font-size:clamp(40px,7vw,72px);font-weight:800;letter-spacing:-.01em;text-transform:uppercase}
+h2{font-size:30px;font-weight:700;text-transform:uppercase;letter-spacing:.01em}
+h3{font-size:20px;font-weight:700}
+p{margin:0}
+.k{font-family:var(--display);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-ink);font-weight:700}
+section{margin-top:56px;display:grid;gap:18px}
+.lead{max-width:68ch;color:var(--mute)}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.card h3{margin-bottom:6px}
+.card ul{margin:6px 0 0;padding-left:18px}
+.card li{margin:4px 0}
+.fact{padding-left:0}
+.fact b{color:var(--warn)}
+.loop{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.step{background:var(--panel2);border-radius:8px;padding:10px 12px;font-size:14px}
+.step .n{font-family:var(--display);font-size:22px;font-weight:800;color:var(--blue);display:block;line-height:1}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--mute)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.mono{font-variant-numeric:tabular-nums}
+.pill{display:inline-block;font-family:var(--display);font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:4px;background:var(--panel2);color:var(--fg)}
+.pill.b{background:var(--blue);color:#06202c}
+.pill.w{background:var(--warn);color:#fff}
+.pill.g{background:var(--ok);color:#fff}
+
+/* PHONE FRAMES: direction A tokens, fixed dark world (in-gym use). */
+.frames{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.fr{min-width:0}
+.fr .cap{font-size:13px;color:var(--mute);margin-top:8px}
+.fr .cap b{color:var(--fg)}
+.ph{--pbg:#0A0A0B;--ps:#141416;--ps2:#1B1B1F;--pl:#26262B;--pt:#F4F4F6;--pb:#C9C9CF;--pm:#8C8C95;--pe:#29ABE2;--pd:#145F86;--pink:#081C28;--pr:#7ACBEF;
+  background:var(--pbg);color:var(--pt);border-radius:28px;border:6px solid #2b2d33;height:720px;overflow:hidden;display:flex;flex-direction:column;font-family:var(--body);font-size:14px;line-height:1.35;position:relative;max-width:360px;margin:0 auto;width:100%}
+.ph .top{display:flex;justify-content:space-between;align-items:center;padding:14px 16px 6px;font-size:12px;color:var(--pm)}
+.ph .body{flex:1;overflow:hidden;padding:0 14px;display:flex;flex-direction:column;gap:10px}
+.ph .tabs{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--pl);padding:8px 6px 14px;font-family:var(--display);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--pm);text-align:center}
+.ph .tabs .on{color:var(--pe)}
+.ph .tabs span{display:block}
+.ph .tabs i{display:block;width:18px;height:18px;border:2px solid currentColor;border-radius:5px;margin:0 auto 4px}
+.ph h4{font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.02em;font-size:30px;line-height:.95;margin:0}
+.ph h5{font-family:var(--display);font-weight:700;text-transform:uppercase;letter-spacing:.1em;font-size:12px;color:var(--pm);margin:0}
+.ph .c{background:var(--ps);border:1px solid var(--pl);border-radius:12px;padding:12px}
+.ph .c.e{border-color:var(--pe)}
+.ph .num{font-family:var(--display);font-weight:800;font-size:44px;line-height:.9;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.ph .num small{font-size:14px;font-weight:600;color:var(--pm);letter-spacing:.06em;margin-left:4px}
+.ph .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ph .btn{background:var(--pe);color:var(--pink);font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.08em;font-size:16px;border-radius:10px;padding:12px;text-align:center}
+.ph .btn.q{background:var(--ps2);color:var(--pt);font-size:13px;padding:9px}
+.ph .chip{display:inline-block;font-family:var(--display);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:4px;background:var(--ps2);color:var(--pb)}
+.ph .chip.e{background:var(--pe);color:var(--pink)}
+.ph .chip.r{background:#2a1f12;color:#f0b06a}
+.ph .chip.g{background:#12301f;color:#7fe0a8}
+.ph .m{color:var(--pm);font-size:12px}
+.ph .ring{width:64px;height:64px;border-radius:50%;background:conic-gradient(var(--pe) 0 74%,var(--ps2) 74% 100%);display:grid;place-items:center;flex:none}
+.ph .ring b{width:50px;height:50px;border-radius:50%;background:var(--ps);display:grid;place-items:center;font-family:var(--display);font-size:22px;font-weight:800}
+.ph .setgrid{display:grid;grid-template-columns:28px 1fr 1fr 32px;gap:6px;align-items:center;font-variant-numeric:tabular-nums}
+.ph .setgrid .h{font-family:var(--display);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--pm)}
+.ph .setgrid .cell{background:var(--ps2);border-radius:6px;padding:7px 8px;text-align:center;font-weight:600}
+.ph .setgrid .cell.hit{outline:2px solid var(--pe)}
+.ph .setgrid .ck{width:26px;height:26px;border-radius:7px;border:2px solid var(--pl);display:grid;place-items:center;color:var(--pe);font-weight:800}
+.ph .setgrid .ck.on{background:var(--pe);color:var(--pink);border-color:var(--pe)}
+.ph .kyle{display:flex;gap:10px;align-items:flex-start}
+.ph .kyle .av{width:34px;height:34px;border-radius:50%;background:var(--pe);flex:none;display:grid;place-items:center;font-family:var(--display);font-weight:800;color:var(--pink)}
+.ph .bub{background:var(--ps2);border-radius:12px;padding:10px 12px;font-size:14px}
+.ph .bub.me{background:var(--pd);color:#fff;margin-left:36px}
+.ph .wave{height:22px;display:flex;align-items:center;gap:2px}
+.ph .wave i{display:block;width:3px;border-radius:2px;background:var(--pe)}
+.ph .medal{width:88px;height:88px;border-radius:50%;margin:6px auto 0;background:radial-gradient(circle at 35% 30%,#7ACBEF,#1B7FB2 60%,#0b4b6e);display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:30px;color:#fff;box-shadow:0 0 0 6px #0f2e3f}
+.ph .bar{height:8px;border-radius:4px;background:var(--ps2);overflow:hidden}
+.ph .bar i{display:block;height:100%;background:var(--pe)}
+.ph .list{display:grid;gap:8px}
+.ph .li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;background:var(--ps);border:1px solid var(--pl);border-radius:10px}
+.ph .li.needs{border-color:#f0b06a}
+.ph .li .nm{font-weight:600}
+.ph .wk{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-size:11px}
+.ph .wk div{background:var(--ps2);border-radius:6px;padding:6px 0}
+.ph .wk div b{display:block;font-family:var(--display);font-size:16px;font-weight:800}
+.ph .wk .as{outline:2px solid var(--pe)}
+.ph .wk .done{background:var(--pd)}
+.ph .wk .miss{background:#2a1f12}
+.ph .seg{display:flex;gap:6px}
+.ph .seg span{flex:1;text-align:center;font-family:var(--display);font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:7px;border-radius:8px;background:var(--ps2);color:var(--pm)}
+.ph .seg .on{background:var(--pe);color:var(--pink)}
+.ph .in{background:var(--ps2);border:1px solid var(--pl);border-radius:8px;padding:9px 10px;color:var(--pb);font-size:13px}
+.ph .bigline{font-family:var(--display);font-weight:700;font-size:22px;line-height:1.05}
+
+/* LOOK CARDS */
+.looks{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.look{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel);min-width:0}
+.look .sw{padding:16px;display:grid;gap:8px}
+.look .sw.dark{background:#0A0A0B;color:#F4F4F6}
+.look .sw.light{background:#f7f7f8;color:#121316}
+.look .sw.split{background:linear-gradient(90deg,#0A0A0B 50%,#f7f7f8 50%);color:#F4F4F6}
+.look .t1{font-size:40px;font-weight:800;line-height:.95;text-transform:uppercase}
+.look .t2{font-size:14px}
+.look .dots{display:flex;gap:6px}
+.look .dots i{width:22px;height:22px;border-radius:5px;display:block;border:1px solid rgba(128,128,128,.3)}
+.look .meta{padding:14px 16px;font-size:14px}
+.look .meta b{display:block;font-family:var(--display);font-size:18px;text-transform:uppercase}
+
+/* DECISIONS */
+.q{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:10px}
+.qh{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.qh .k{font-size:14px}
+.opts{display:grid;gap:8px}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.opt.on{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 10%,var(--panel))}
+.opt input{margin-top:4px;accent-color:var(--blue)}
+.ol{font-weight:600}
+.ot{font-size:14px;color:var(--mute)}
+textarea{width:100%;min-height:56px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;background:var(--panel2);color:var(--fg)}
+#savestate{font-size:13px;color:var(--mute)}
+.units{display:grid;gap:8px}
+.unit{display:grid;grid-template-columns:64px 1fr;gap:12px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.unit .id{font-family:var(--display);font-size:20px;font-weight:800;color:var(--blue)}
+.unit .id small{display:block;font-size:11px;letter-spacing:.1em;color:var(--mute);font-weight:600}
+.unit p{font-size:14px}
+.unit .gl{font-size:13px;color:var(--mute);margin-top:4px}
+a{color:var(--blue-ink)}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+@media (prefers-reduced-motion: no-preference){ .ph .wave i{animation:w 1.1s ease-in-out infinite alternate} .ph .wave i:nth-child(2n){animation-delay:.15s} .ph .wave i:nth-child(3n){animation-delay:.3s} }
+@keyframes w{from{height:4px}to{height:20px}}
+</style>
+
+<div class="wrap">
+  <p class="k">Design round · overhaul · 2026-10-21</p>
+  <h1>WORKHART Overhaul</h1>
+  <p class="lead">One board for the whole overhaul: what the app is today, the trainer and client loops it must serve, the target screens, three looks within the brand, eight decisions, and the overnight build plan. Picks save to this board's own store and are read back by the build, never re-asked. Four rulings are already taken from this afternoon: one trainer built for many, lean core first, keep the logo and the blue, and authority to commit, migrate and deploy each green unit to alphaecho.io.</p>
+
+  <!-- 1. DIAGNOSIS -->
+  <section id="today">
+    <p class="k">1 · What is there today</p>
+    <h2>A strong prototype carrying a real backend</h2>
+    <p class="lead">Read from the code and the live droplet, not from memory. The backend is further along than the app that sits on it.</p>
+    <div class="grid">
+      <div class="card"><h3>Built and live on alphaecho.io</h3><ul>
+        <li>Postgres data of record: users, sessions, workouts, assignments, logs and sets, check-ins, fuel, messages, AI drafts, job runs. Every query scoped by the session's user. 68 server tests green today.</li>
+        <li>Kyle console: roster, per-client dashboard, workout builder, assign to a date, inbox, AI draft queue with approve and auto-send, daily monitor and weekly summary jobs.</li>
+        <li>Client app: check-in, Today, Train with a set grid, Fuel, Progress, Coach thread. Kyle's ElevenLabs voice through one server route with the tuned recipe.</li>
+        <li>Sign-in by password or magic link. Resend sending from mail.alphaecho.io. One trainer, four clients, five logged sessions in the database.</li>
+      </ul></div>
+      <div class="card"><h3>What holds it back</h3><ul>
+        <li>One 3,800-line component with a prototype mode and a server mode braided together. Mock data still leaks into server mode (PR chips, the program list, the coach cards).</li>
+        <li>Kyle speaks at scripted moments only. Nothing reacts to what the client just lifted.</li>
+        <li>No programs, no bundles across clients, no email channel, no offers, no achievements, no install on the phone, no payments, no device data.</li>
+        <li>Clients are added with psql. The trainer cannot onboard anyone from the app.</li>
+      </ul></div>
+      <div class="card"><h3>Facts that change two of the goals</h3>
+        <p class="fact" style="margin-top:6px"><b>Google Fit is ending.</b> Google closed new Fit API sign-ups in May 2024 and the REST API shuts down during 2026 with no server-side replacement. Health Connect (Android) and Apple Health have no web access: both need a native shell on the phone. A web-only app cannot read an Apple Watch.</p>
+        <p class="fact" style="margin-top:10px"><b>MyFitnessPal's API is partner-only</b> and has been since 2012. The seamless path is indirect: MFP writes to Apple Health and Health Connect, and a native shell reads those.</p>
+        <p class="fact" style="margin-top:10px"><b>Stripe Checkout gives cards, Apple Pay, Google Pay and Link</b> out of the box for monthly or annual plans. PayPal and Venmo are not confirmed for US subscriptions through Stripe; treat them as a later question, not a launch requirement.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. THE TWO LOOPS -->
+  <section id="loops">
+    <p class="k">2 · The two loops the app must serve</p>
+    <h2>Trainer sets it up. Client lives in it. Kyle's voice ties them.</h2>
+    <div class="grid">
+      <div class="card"><h3>Trainer loop (Kyle, on a laptop)</h3>
+        <div class="loop" style="margin-top:8px">
+          <div class="step"><span class="n">1</span>Add a client by email; they get a link.</div>
+          <div class="step"><span class="n">2</span>Build workouts once; group them into a program.</div>
+          <div class="step"><span class="n">3</span>Enrol many clients in a program from a start date.</div>
+          <div class="step"><span class="n">4</span>Roster shows who needs attention first.</div>
+          <div class="step"><span class="n">5</span>Compose with an AI draft; send in-app and by email.</div>
+          <div class="step"><span class="n">6</span>Offer a 1:1, a call or a program; requests land in the inbox.</div>
+        </div></div>
+      <div class="card"><h3>Client loop (on the phone, in the gym)</h3>
+        <div class="loop" style="margin-top:8px">
+          <div class="step"><span class="n">1</span>Morning check-in sets today's readiness.</div>
+          <div class="step"><span class="n">2</span>Today shows the session Kyle assigned.</div>
+          <div class="step"><span class="n">3</span>Log sets against targets; finish each exercise.</div>
+          <div class="step"><span class="n">4</span>Kyle reacts in his voice to what was just lifted.</div>
+          <div class="step"><span class="n">5</span>Finish: scorecard, achievements, a summary from Kyle.</div>
+          <div class="step"><span class="n">6</span>Coach tab: the thread, offers, 30 days of history.</div>
+        </div></div>
+    </div>
+  </section>
+
+  <!-- 3. TARGET SCREENS -->
+  <section id="screens">
+    <p class="k">3 · Target screens (look A)</p>
+    <h2>Eight frames, real flows, example data</h2>
+    <p class="lead">Names and numbers below are examples, not database rows. Phone frames are the client app; the last three are the trainer console as it reads on a phone (the laptop layout is the same screens with two columns).</p>
+    <div class="frames">
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>9:41</span><span>WORKHART</span></div>
+        <div class="body">
+          <div class="row"><div><h5>Tuesday · Oct 21</h5><h4>Morning, Dana</h4></div><div class="ring"><b>74</b></div></div>
+          <div class="c e">
+            <h5>Today from Kyle</h5>
+            <div class="bigline" style="margin-top:4px">Lower A · Week 3</div>
+            <p class="m">5 exercises · 18 sets · ~48 min · Day 10 of 40</p>
+            <div class="row" style="margin-top:10px"><span class="chip g">Streak 4</span><span class="chip">Last: 3 of 5 targets hit</span></div>
+            <div class="btn" style="margin-top:12px">Start session</div>
+          </div>
+          <div class="c kyle"><div class="av">K</div><div><p class="m">Kyle · 7:12 AM</p><p>Readiness 74 after two short nights. Keep the squat at 185 today, we chase 195 Thursday.</p><div class="wave" style="margin-top:6px"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+          <div class="row"><h5>This week</h5><span class="m">3 of 4 done</span></div>
+          <div class="wk"><div class="done"><b>M</b>✓</div><div class="as"><b>T</b>now</div><div><b>W</b>·</div><div class="as"><b>T</b>·</div><div><b>F</b>·</div><div class="as"><b>S</b>·</div><div><b>S</b>·</div></div>
+        </div>
+        <div class="tabs"><span class="on"><i></i>Today</span><span><i></i>Train</span><span><i></i>Coach</span><span><i></i>Fuel</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Today.</b> Readiness ring, the assigned session with a one-line why from Kyle, streak, the week strip. Nothing mock: every value comes from bootstrap.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>Lower A · 2 of 5</span><span>22:14</span></div>
+        <div class="body">
+          <div class="bar"><i style="width:40%"></i></div>
+          <h5>Exercise 2</h5><h4>Barbell Back Squat</h4>
+          <div class="row"><span class="chip">Target 4 × 5 @ 185</span><span class="chip e">Last 185 × 5</span></div>
+          <div class="c">
+            <div class="setgrid">
+              <div class="h">Set</div><div class="h">Reps</div><div class="h">lb</div><div class="h"></div>
+              <div class="m mono">1</div><div class="cell hit">5</div><div class="cell">185</div><div class="ck on">✓</div>
+              <div class="m mono">2</div><div class="cell hit">5</div><div class="cell">185</div><div class="ck on">✓</div>
+              <div class="m mono">3</div><div class="cell">4</div><div class="cell">185</div><div class="ck on">✓</div>
+              <div class="m mono">4</div><div class="cell">5</div><div class="cell">185</div><div class="ck"></div>
+            </div>
+            <div class="row" style="margin-top:10px"><span class="m">Rest 1:30 → 0:42</span><span class="chip">+ set</span></div>
+          </div>
+          <div class="btn q">Watch the form video</div>
+          <div class="btn">Done with squats</div>
+          <p class="m" style="text-align:center">Kyle speaks after this exercise, not after every set.</p>
+        </div>
+        <div class="tabs"><span><i></i>Today</span><span class="on"><i></i>Train</span><span><i></i>Coach</span><span><i></i>Fuel</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Train.</b> One exercise per screen, targets beside the grid, the rest timer under it. "Done with squats" is the moment that triggers Kyle.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>Lower A · 2 of 5</span><span>23:02</span></div>
+        <div class="body" style="justify-content:center;gap:16px">
+          <div class="kyle" style="flex-direction:column;align-items:center;text-align:center;gap:12px">
+            <div class="av" style="width:72px;height:72px;font-size:30px">K</div>
+            <div class="wave" style="height:36px"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <p class="bigline" style="font-size:24px">"Three sets of five at 185 and a four. That fourth rep on set three is the one we talked about. Hold the brace through the last set."</p>
+          </div>
+          <div class="row" style="justify-content:center;gap:8px"><span class="chip g">3 of 4 hit</span><span class="chip">Volume 3,515 lb</span><span class="chip">= last time</span></div>
+          <div class="btn">Next: Romanian deadlift</div>
+          <div class="btn q">Say it again</div>
+        </div>
+        <div class="tabs"><span><i></i>Today</span><span class="on"><i></i>Train</span><span><i></i>Coach</span><span><i></i>Fuel</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>The set-end moment.</b> Kyle's line is written by Claude from the sets just logged, the last session and today's readiness, then spoken with the untouched voice recipe. Text always shows; if the voice fails, the text stays.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>Session complete</span><span>49:30</span></div>
+        <div class="body">
+          <h5>Lower A · Week 3</h5><h4>Good work, Dana</h4>
+          <div class="c" style="text-align:center"><div class="medal">7</div><h5 style="margin-top:10px;color:var(--pe)">New achievement</h5><div class="bigline">Seven straight</div><p class="m">Every assigned session this week and last.</p></div>
+          <div class="row" style="gap:8px">
+            <div class="c" style="flex:1;text-align:center"><div class="num">4<small>of 5</small></div><p class="m">targets hit</p></div>
+            <div class="c" style="flex:1;text-align:center"><div class="num">12.4<small>k lb</small></div><p class="m">volume · +3%</p></div>
+          </div>
+          <div class="c kyle"><div class="av">K</div><div><p>That is three weeks without a miss. Squat stays at 185 one more session, then we move. Eat tonight.</p><div class="wave" style="margin-top:6px"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+          <div class="btn q">How did it feel? &nbsp; Easy · Right · Hard</div>
+        </div>
+        <div class="tabs"><span><i></i>Today</span><span class="on"><i></i>Train</span><span><i></i>Coach</span><span><i></i>Fuel</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Finish.</b> Scorecard first, the achievement reveal when one was earned, Kyle's summary, one tap of feedback. Achievements come from one registry on the server and are earned inside the same transaction as the log.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>9:41</span><span>Coach</span></div>
+        <div class="body">
+          <div class="seg"><span class="on">Kyle</span><span>History</span><span>Offers</span></div>
+          <div class="kyle"><div class="av">K</div><div class="bub">Readiness dipped to 61 after Saturday. Sunday is a walk, not a lift.</div></div>
+          <div class="bub me">Sounds right. Knee felt fine on the squats.</div>
+          <div class="kyle"><div class="av">K</div><div class="bub">Good. Thursday we go to 195. <span class="m">7:12 AM</span></div></div>
+          <div class="c e"><h5>From Kyle</h5><div class="bigline" style="margin-top:4px">Form check call · 20 min</div><p class="m">We look at your squat video together and set the next block. $45.</p><div class="btn q" style="margin-top:8px">Ask Kyle about this</div></div>
+          <div class="row"><div class="in" style="flex:1">Message Kyle</div><span class="chip e">Send</span></div>
+        </div>
+        <div class="tabs"><span><i></i>Today</span><span><i></i>Train</span><span class="on"><i></i>Coach</span><span><i></i>Fuel</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Coach.</b> The thread reads as Kyle, whether he typed it or approved a draft. Offers sit in the thread as cards; "Ask Kyle about this" sends a message and files a request. History is the second tab: 30 days of sessions with every set.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>Kyle · Console</span><span>Tue</span></div>
+        <div class="body">
+          <h5>Needs you</h5>
+          <div class="list">
+            <div class="li needs"><div><div class="nm">Marcus T.</div><p class="m">Missed Mon · Wed · readiness 48</p></div><span class="chip r">2 missed</span></div>
+            <div class="li needs"><div><div class="nm">Priya S.</div><p class="m">Replied 2h ago</p></div><span class="chip r">Unread</span></div>
+            <div class="li needs"><div><div class="nm">3 drafts</div><p class="m">Kyle's replies waiting for approval</p></div><span class="chip">Review</span></div>
+          </div>
+          <div class="row"><h5>Everyone · 12</h5><span class="chip e">+ Add client</span></div>
+          <div class="list">
+            <div class="li"><div><div class="nm">Dana R.</div><p class="m">Lower A today · streak 4</p></div><span class="chip g">On track</span></div>
+            <div class="li"><div><div class="nm">Jon K.</div><p class="m">Rest day · 40 Day · day 22</p></div><span class="chip g">On track</span></div>
+            <div class="li"><div><div class="nm">Ava M.</div><p class="m">Program ends Fri</p></div><span class="chip">Enrol next</span></div>
+          </div>
+        </div>
+        <div class="tabs"><span class="on"><i></i>Roster</span><span><i></i>Build</span><span><i></i>Inbox</span><span><i></i>Offers</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Roster.</b> Needs-you first (missed, unread, drafts), then everyone. "Add client" takes an email and sends the sign-in link; no more psql.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>← Build</span><span>Program</span></div>
+        <div class="body">
+          <h5>Program</h5><h4>Strength Block 2</h4>
+          <p class="m">4 weeks · 16 sessions · 12 rest days</p>
+          <div class="list">
+            <div class="li"><span class="m mono">Day 1</span><span class="nm">Lower A</span><span class="chip">5 ex</span></div>
+            <div class="li"><span class="m mono">Day 2</span><span class="nm">Upper A</span><span class="chip">6 ex</span></div>
+            <div class="li"><span class="m mono">Day 3</span><span class="m">Rest</span><span></span></div>
+            <div class="li"><span class="m mono">Day 4</span><span class="nm">Lower B</span><span class="chip">5 ex</span></div>
+          </div>
+          <div class="c e">
+            <h5>Enrol clients</h5>
+            <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:6px"><span class="chip e">Dana R. ✓</span><span class="chip e">Jon K. ✓</span><span class="chip e">Ava M. ✓</span><span class="chip">Marcus T.</span><span class="chip">Priya S.</span></div>
+            <div class="row" style="margin-top:8px"><span class="m">Start</span><span class="in">Mon Oct 27</span></div>
+            <div class="btn" style="margin-top:10px">Enrol 3 clients · 48 sessions</div>
+          </div>
+        </div>
+        <div class="tabs"><span><i></i>Roster</span><span class="on"><i></i>Build</span><span><i></i>Inbox</span><span><i></i>Offers</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Bundle.</b> A program is an ordered list of days. Enrolling writes one assignment per client per day from the start date; duplicates are skipped, not doubled.</p></div>
+
+      <div class="fr"><div class="ph">
+        <div class="top"><span>← Inbox</span><span>Compose</span></div>
+        <div class="body">
+          <h5>To</h5>
+          <div class="row" style="flex-wrap:wrap;gap:6px"><span class="chip e">Marcus T.</span><span class="chip e">Priya S.</span><span class="chip">+ more</span></div>
+          <h5>Kyle wants to</h5>
+          <div class="row" style="flex-wrap:wrap;gap:6px"><span class="chip e">Encourage</span><span class="chip">Check in</span><span class="chip">Fix form</span><span class="chip">Offer</span></div>
+          <div class="in">Notes: both missed Monday, readiness is low, be warm not pushy</div>
+          <div class="btn q">Draft with AI · one per client</div>
+          <div class="c"><p class="m">Marcus · draft</p><p>Two misses this week and a 48 this morning tells me your body is asking for sleep, not squats. Walk tonight, lift Thursday. I moved Lower A for you.</p></div>
+          <div class="row"><span class="chip e">In app ✓</span><span class="chip e">Email ✓</span><span class="m">as Kyle</span></div>
+          <div class="btn">Send 2 messages</div>
+        </div>
+        <div class="tabs"><span><i></i>Roster</span><span><i></i>Build</span><span class="on"><i></i>Inbox</span><span><i></i>Offers</span><span><i></i>You</span></div>
+      </div><p class="cap"><b>Compose.</b> Pick clients, pick an intent, add notes, get one draft per client in Kyle's voice. Edit, then send in-app, by email, or both. Email carries Kyle's name and a link back into the app.</p></div>
+
+    </div>
+  </section>
+
+  <!-- 4. LOOKS -->
+  <section id="looks">
+    <p class="k">4 · Three looks within the brand</p>
+    <h2>Logo and blue stay. Everything else is up.</h2>
+    <p class="lead">Space Grotesk leaves with the old look. Each direction keeps black, white and the one blue; they differ in ground, type and density.</p>
+    <div class="looks">
+      <div class="look"><div class="sw dark" style="font-family:var(--display)"><div class="t1">Scoreboard</div><div class="t2" style="font-family:var(--body)">Barlow Condensed for numbers and titles, Barlow for everything else. Dark ground for the gym, big numerals, blue only where you press or where a number matters.</div><div class="dots"><i style="background:#0A0A0B"></i><i style="background:#141416"></i><i style="background:#1B1B1F"></i><i style="background:#29ABE2"></i><i style="background:#7ACBEF"></i><i style="background:#F4F4F6"></i></div></div><div class="meta"><b>A · Scoreboard <span class="pill b">recommended</span></b>The frames above. One system, dark first; the console uses the same tokens at laptop density. Fastest to build because the surfaces already exist in the current app, and the type is already loaded.</div></div>
+      <div class="look"><div class="sw light" style="font-family:var(--plexd)"><div class="t1">Clipboard</div><div class="t2" style="font-family:var(--plex)">IBM Plex Sans Condensed and Plex Sans. Near-white ground, ruled rows, charcoal ink, blue as an underline and a button. Reads like a coach's sheet.</div><div class="dots"><i style="background:#f7f7f8"></i><i style="background:#ffffff"></i><i style="background:#e6e8ec"></i><i style="background:#1b8fc0"></i><i style="background:#121316"></i><i style="background:#5c6370"></i></div></div><div class="meta"><b>B · Clipboard</b>Calmer, better at a desk, weaker under gym light and with a sweaty thumb. Adds a full token swap and a light-ground pass on every frame.</div></div>
+      <div class="look"><div class="sw split" style="font-family:var(--display)"><div class="t1">Split</div><div class="t2" style="font-family:var(--body);background:rgba(0,0,0,.55);padding:6px;border-radius:6px">Scoreboard for the client in the gym, Clipboard for the trainer at the laptop. Same type family, two grounds.</div><div class="dots"><i style="background:#0A0A0B"></i><i style="background:#29ABE2"></i><i style="background:#F4F4F6"></i><i style="background:#f7f7f8"></i><i style="background:#1b8fc0"></i><i style="background:#121316"></i></div></div><div class="meta"><b>C · Split</b>Each person gets the ground that suits where they are. Costs two token sets and two contrast tables, and every shared component ships in both.</div></div>
+    </div>
+  </section>
+
+  <!-- 5. DECISIONS -->
+  <section id="decisions">
+    <p class="k">5 · Decisions</p>
+    <h2>Eight picks. Recommended options are marked.</h2>
+    <p id="savestate">Loading the store…</p>
+    <div id="qs" style="display:grid;gap:14px"></div>
+  </section>
+
+  <!-- 6. PLAN -->
+  <section id="plan">
+    <p class="k">6 · The overnight build</p>
+    <h2>Night one: the lean core, eleven units</h2>
+    <p class="lead">Backend first so every screen is built against a real route. Each unit ships alone with its own gate; a green unit is committed, migrated and deployed to alphaecho.io before the next starts. The Netlify prototype is pinned to a frozen branch before anything moves. The full kit is in <code>docs/comps/overhaul/</code> (SPEC, EXECUTE).</p>
+    <div class="units">
+      <div class="unit"><div class="id">W.0<small>Fable</small></div><div><p>Preflight: commit the green U9/U10/U10b work, branch <code>prototype</code> at that commit and point Netlify at it, branch <code>overhaul</code>, baseline gate.</p><p class="gl">Gate: Netlify builds the prototype from the pinned branch; 68 server tests; build passes.</p></div></div>
+      <div class="unit"><div class="id">W.1<small>Sonnet</small></div><div><p>Trainer tenancy: <code>users.trainer_id</code>, every console query scoped to the signed-in trainer, add-client-by-email with a sign-in link.</p><p class="gl">Gate: a second trainer in tests sees none of Kyle's clients, workouts, messages or drafts.</p></div></div>
+      <div class="unit"><div class="id">W.2<small>Sonnet</small></div><div><p>Programs and bundles: programs, days, enrolments that write assignments per client from a start date; bulk assign; trainer calendar.</p><p class="gl">Gate: enrol 3 clients × 4 days = 12 assignments, enrol again = 0 new.</p></div></div>
+      <div class="unit"><div class="id">W.3<small>Sonnet</small></div><div><p>Coach lines: Claude writes Kyle's line after each exercise and at the finish from the sets just logged; the voice recipe is untouched; a fallback line bank when the API fails.</p><p class="gl">Gate: the line cites the logged numbers; the same request twice returns the cached line; API failure still returns a line.</p></div></div>
+      <div class="unit"><div class="id">W.4<small>Sonnet</small></div><div><p>Achievements: one registry, earned inside the log and check-in transactions, streak math pure and tested, returned with the write and in bootstrap.</p><p class="gl">Gate: a double log earns once; each rule has a test.</p></div></div>
+      <div class="unit"><div class="id">W.5<small>Sonnet</small></div><div><p>Compose, email and offers: AI drafts per client by intent, broadcast in-app and by email with a send ledger, unread-after-24h email job, offers and requests.</p><p class="gl">Gate: an email is sent once per message however often the job runs; a client with email off gets none.</p></div></div>
+      <div class="unit"><div class="id">W.6<small>Opus</small></div><div><p>Foundation: tokens in one module, the split of the one big file into app, client, trainer and ui folders, the shell, PWA install (manifest, service worker, iOS instructions), prototype mode removed.</p><p class="gl">Gate: no colour literal outside the token module (test); installable on a phone; every existing flow still reaches its route.</p></div></div>
+      <div class="unit"><div class="id">W.7<small>Sonnet</small></div><div><p>Client core: Today, Train, the set-end moment, Finish with scorecard and achievement reveal.</p><p class="gl">Gate: a full session on alphaecho.io as the test client; psql shows the log, the coach lines and the earned row.</p></div></div>
+      <div class="unit"><div class="id">W.8<small>Sonnet</small></div><div><p>Client rest: Coach thread with offers, 30-day History, Fuel restyled, You (profile, device, email preference, sign out), check-in restyled.</p><p class="gl">Gate: every tab renders real data; history shows only the window.</p></div></div>
+      <div class="unit"><div class="id">W.9<small>Sonnet</small></div><div><p>Trainer core: Roster with needs-you, client page with week strip and assign, Add client.</p><p class="gl">Gate: Kyle adds a client from the console; the link arrives; the client signs in.</p></div></div>
+      <div class="unit"><div class="id">W.10<small>Sonnet</small></div><div><p>Trainer rest: Build (workouts and programs), enrol, Inbox with drafts, Compose, Offers.</p><p class="gl">Gate: build a program, enrol two clients, draft and send a message both channels, read it back as the client.</p></div></div>
+      <div class="unit"><div class="id">W.11<small>Fable</small></div><div><p>Round close: specs, loose ends, PRD, CLAUDE.md, memory; the morning report.</p><p class="gl">Gate: docs match the code; nothing open lives only in chat.</p></div></div>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <div class="card"><h3>Night two (not in this run)</h3><ul>
+        <li>Stripe subscriptions, monthly and annual, Checkout with Apple Pay and Google Pay, the portal, webhook-driven entitlements, the paywall per q3.</li>
+        <li>Web push for installed phones (iOS 16.4+), Kyle's messages and session reminders.</li>
+        <li>Wearables per q4; food per q5; one-time offer checkout per q7.</li>
+        <li>Native shell for Apple Watch and Health Connect, which also brings MyFitnessPal in through Apple Health.</li>
+      </ul></div>
+      <div class="card"><h3>Stop rules</h3><ul>
+        <li>A unit that fails its gate twice restarts once on Opus with the same ask. A third failure stops the run with the branch left on its last green commit.</li>
+        <li>A failed deploy read-back reverts on main and redeploys the previous commit.</li>
+        <li>Kyle's voice recipe, the no-speechSynthesis rule, secrets handling and tenant scoping are never relaxed to pass a gate.</li>
+      </ul></div>
+      <div class="card"><h3>In the morning, Sam looks at</h3><ul>
+        <li>alphaecho.io on his phone: install it, check in, run the assigned session, hear Kyle after an exercise.</li>
+        <li>The console on the laptop: add a client, build a program, enrol, compose and send.</li>
+        <li>The memory note and <code>docs/comps/overhaul/GATES.md</code> for every gate's real output.</li>
+      </ul></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  /* DECISIONS: PICKS SAVE TO picks/workhart-overhaul1 AS {picks:{q1..q8}, notes:{q1..q8}}. NONE ARE MULTI-SELECT. */
+  var QS = [
+    {id:"q1", title:"Which look?", opts:[
+      {v:"a", l:"A · Scoreboard (recommended)", t:"The frames above. Dark first, one token set, Barlow Condensed and Barlow. Fastest to build."},
+      {v:"b", l:"B · Clipboard", t:"Light ground, Plex Sans Condensed and Plex Sans. Calmer at a desk, weaker in the gym."},
+      {v:"c", l:"C · Split", t:"Scoreboard for the client, Clipboard for the trainer. Two token sets, two contrast tables."}]},
+    {id:"q2", title:"When does Kyle speak during a session?", opts:[
+      {v:"a", l:"After each exercise and at the finish (recommended)", t:"Five or six moments a session. One Claude call plus one voice call each, around a quarter a session. The line reacts to the sets just logged."},
+      {v:"b", l:"After every set", t:"Twenty lines a session. Four times the cost and the waiting; the rest timer becomes Kyle talking over itself."},
+      {v:"c", l:"Only at the finish", t:"One moment. Cheapest, but the session feels like today's: a form to fill in."}]},
+    {id:"q3", title:"What is free and what is the subscription? (built night two, decided now)", opts:[
+      {v:"a", l:"Coaching is the plan; the self-guided library is free (recommended)", t:"Anyone can run the 40 Day program, log and track. Assigned sessions, Kyle's messages and Kyle's voice need the monthly or annual plan. Offers are paid separately."},
+      {v:"b", l:"Everything behind a 7-day trial", t:"Simpler gate, fewer free users to turn into paying ones."},
+      {v:"c", l:"Billing built, switch off until you say", t:"Same code, no gate in production until the first real client is ready."}]},
+    {id:"q4", title:"Wearables (night two)", opts:[
+      {v:"a", l:"Oura, Whoop, Garmin by direct OAuth (recommended)", t:"Free developer APIs, no aggregator at $499 a month. Sleep and HRV feed readiness. No Apple Watch yet."},
+      {v:"b", l:"Native shell first: Apple Watch and Health Connect", t:"A thin wrapper around the installed web app with a HealthKit and Health Connect bridge. Brings Apple Watch, Pixel and MyFitnessPal (through Apple Health) in one go. Bigger, and iPhone distribution without the store means TestFlight."},
+      {v:"c", l:"Wait", t:"Readiness stays check-in only until a client asks."}]},
+    {id:"q5", title:"Food tracking", opts:[
+      {v:"a", l:"Keep Fuel, add photo logging with Claude (recommended)", t:"The tracker already works with Open Food Facts; a photo of the plate becomes an entry. No MyFitnessPal dependency."},
+      {v:"b", l:"Apple Health nutrition through the native shell", t:"MyFitnessPal writes to Apple Health; the shell reads it. Only arrives with q4 option b."},
+      {v:"c", l:"MyFitnessPal CSV import", t:"MFP Premium can export a diary; the client uploads it. Works, clumsy, never seamless."}]},
+    {id:"q6", title:"Email from Kyle", opts:[
+      {v:"a", l:"Unread after 24 hours goes to email, plus broadcasts and offers (recommended)", t:"A client who is in the app never gets a duplicate. One job, one ledger, one email per message ever."},
+      {v:"b", l:"Broadcasts and offers only", t:"Replies stay in-app. Fewer emails, more missed replies."},
+      {v:"c", l:"In-app only", t:"No email channel this round."}]},
+    {id:"q7", title:"Offers (upsell)", opts:[
+      {v:"a", l:"Offer cards in the thread, request lands in the inbox; Stripe one-time checkout night two (recommended)", t:"Kyle sets a title, blurb, price and kind. The client asks; Kyle closes it in the thread. Payment follows the subscription work."},
+      {v:"b", l:"Link out to a booking page", t:"Calendly-style link in the card. Nothing to build beyond the card; nothing measured."},
+      {v:"c", l:"None this round", t:""}]},
+    {id:"q8", title:"History window", opts:[
+      {v:"a", l:"30 days for everyone now; the plan extends it later (recommended)", t:"The server keeps everything; the client reads a window. The plan can widen it in night two."},
+      {v:"b", l:"All history, always", t:"No window. One less thing to sell later."}]}
+  ];
+  var picks = {}, notes = {}, docRef = null, saveTimer = null;
+  var qsEl = document.getElementById("qs"), stateEl = document.getElementById("savestate");
+  function isOn(q, v){ return picks[q.id] === v; }
+  function renderDec(){
+    qsEl.innerHTML = "";
+    QS.forEach(function(q){
+      var box = document.createElement("div"); box.className = "q"; box.id = q.id;
+      var h = document.createElement("div"); h.className = "qh";
+      h.innerHTML = '<span class="k">' + q.id + '</span><h3>' + q.title + '</h3>';
+      box.appendChild(h);
+      var opts = document.createElement("div"); opts.className = "opts";
+      q.opts.forEach(function(o){
+        var lab = document.createElement("label"); lab.className = "opt" + (isOn(q, o.v) ? " on" : "");
+        var inp = document.createElement("input"); inp.type = "radio"; inp.name = q.id; inp.value = o.v; inp.id = q.id + "-" + o.v; inp.checked = isOn(q, o.v);
+        inp.addEventListener("change", function(){ picks[q.id] = o.v; renderDec(); save(); });
+        var txt = document.createElement("div"); txt.innerHTML = '<div class="ol">' + o.l + '</div>' + (o.t ? '<div class="ot">' + o.t + '</div>' : '');
+        lab.appendChild(inp); lab.appendChild(txt); opts.appendChild(lab);
+      });
+      box.appendChild(opts);
+      var ta = document.createElement("textarea"); ta.id = q.id + "-note"; ta.placeholder = "Notes for " + q.id + " (optional)"; ta.value = notes[q.id] || ""; ta.setAttribute("data-note", q.id);
+      ta.addEventListener("input", function(){ notes[q.id] = ta.value; save(); });
+      box.appendChild(ta);
+      qsEl.appendChild(box);
+    });
+  }
+  function save(){
+    if(!docRef){ stateEl.textContent = "Picks can't be saved in this view. They'll only last until you reload."; return; }
+    clearTimeout(saveTimer);
+    stateEl.textContent = "Saving…";
+    saveTimer = setTimeout(function(){
+      docRef.set({picks:picks, notes:notes, boardVersion:1, updatedAt:new Date().toISOString()}).then(function(){
+        stateEl.textContent = "Saved " + new Date().toLocaleTimeString();
+      }).catch(function(){ stateEl.textContent = "Couldn't save. Check you're signed in, then pick again."; });
+    }, 500);
+  }
+  renderDec();
+  if(window.claude && window.claude.use){
+    window.claude.use("db").then(function(ns){
+      if(!ns){ stateEl.textContent = "Picks can't be saved in this view. They'll only last until you reload."; return; }
+      docRef = ns.doc("picks/workhart-overhaul1");
+      stateEl.textContent = "Picks save automatically.";
+      var first = true;
+      docRef.onSnapshot(function(snap){
+        if(!snap.exists) return;
+        var d = snap.data() || {};
+        picks = Object.assign({}, d.picks || {});
+        var incoming = Object.assign({}, d.notes || {});
+        var active = document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute("data-note");
+        if(active) incoming[active] = notes[active];
+        notes = incoming;
+        if(first || !active) renderDec(); first = false;
+      }, function(){ stateEl.textContent = "Lost the connection to the store. Reload to save picks again."; });
+    }).catch(function(){ stateEl.textContent = "Picks can't be saved in this view."; });
+  } else {
+    stateEl.textContent = "Picks can't be saved in this view. They'll only last until you reload.";
+  }
+})();
+</script>
