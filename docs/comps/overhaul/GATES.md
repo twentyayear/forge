@@ -51,3 +51,10 @@
 - Builder: 119/119. Fable re-run: migrate down/up clean; `# tests 119 # pass 119 # fail 0`; `api.resend.com` only in `mail.js`; build passes.
 - Read: broadcast inserts in one transaction, emails after COMMIT, ledger insert-first with delete on failure; nudge job uses the ledger as its idempotency; offers scoped by `trainer_id`; client offer reads via the caller's `trainer_id`; HTML-escaped email body.
 - Deviations accepted: `runUnreadNudge` falls back to the real mailer when deps lack it; `skipped` counted by a second query; `kyleSubject` exported for the test.
+- Ship: main `6df4b45`; deploy OK; prod migration `1790500000000_compose-offers` applied; `NRestarts=0`. Backend units W.1–W.5 complete.
+
+## W.6 foundation — GREEN (opus, first attempt)
+- Builder: build ok, 13/13 src tests (TAP reporter; the ask's grep assumed `#` lines, Node 26's default reporter prints `ℹ`), greps 0, detector `[]`, server 119/119 untouched. Fable re-run identical.
+- Read: `speech.js` posts `{text, voice_id}` through `apiBlob`; `api.js` is the only fetch (same-origin credentials); `sw.js` returns early for `/api/`; `App.jsx` routes by `me.role`.
+- Traps recorded: zsh `--include=*.js` globbing fails without quotes (use `bash -c` or quote); Node 26 test output needs `--test-reporter=tap` when piped.
+- Open (loose ends for W.11): `netlify/` functions still in the tree (prototype branch keeps them; delete on `main` needs Sam's word); legacy Train shows "Push Day A" with no assignment until W.7; calendar strip DST duplicate-key bug (pre-existing) until W.7.

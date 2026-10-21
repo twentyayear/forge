@@ -2,27 +2,34 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Home, Dumbbell, TrendingUp, TrendingDown, MessageSquare, Volume2, VolumeX, Mic,
   ChevronDown, ChevronRight, Award, Watch, Activity, Flame, Play, Check, Moon, Trash2,
-  Plus, Minus, Timer, X, PartyPopper, Gauge, Download, Settings, Lock,
+  Plus, Minus, Timer, X, PartyPopper, Download, Settings,
 } from "lucide-react";
 import { realHistory, averageScore, buildServerHistoryCsv } from "./history.js";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, Tooltip, CartesianGrid } from "recharts";
+import { T } from "./theme.js";
+import { api, foodSearch } from "./lib/api.js";
+import { createSpeaker } from "./lib/speech.js";
+import { EX_LIB, VIDEO_IDS, EX_INFO, FALLBACK_CUE, BLOCK_TYPES } from "./data/exercises.js";
+import { CHECKIN_QS } from "./data/checkin.js";
+import { FUEL_QUICK, DEFAULT_FUEL_TARGETS, DEVICE_OPTIONS } from "./data/fuel.js";
+import { DAY_MS, WD, startOfDay, iso, fmtLong, fmtMonth } from "./data/dates.js";
+import { Sheet, Ring, Mark } from "./ui/index.js";
 
-// ---- Tokens ----
+// LEGACY SCREENS UNTIL W.7-W.10 REBUILD THEM: THE OLD KEYS, EACH MAPPED TO A LOOK-A TOKEN.
 const C = {
-  bg: "#0A0A0B", surface: "#141416", surface2: "#1B1B1F",
-  line: "#26262B", lineStrong: "#3B3B44",
-  text: "#F4F4F6", body: "#C9C9CF", muted: "#8C8C95",
-  energy: "#29ABE2", energyDeep: "#1B7FB2",
-  recovery: "#7ACBEF", inkOnEnergy: "#081C28",
+  bg: T.color.bg, surface: T.color.surface, surface2: T.color.surface2,
+  line: T.color.line, lineStrong: T.color.lineStrong,
+  text: T.color.text, body: T.color.body, muted: T.color.muted,
+  energy: T.color.energy, energyDeep: T.color.energyDeep,
+  recovery: T.color.recovery, inkOnEnergy: T.color.inkOnEnergy,
 };
 
 const css = `
 *, *::before, *::after { box-sizing: border-box; }
 html, body { overflow-x: hidden; }
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-.ff-d { font-family: 'Barlow Condensed', sans-serif; }
-.ff-b { font-family: 'Space Grotesk', system-ui, sans-serif; }
-button { cursor: pointer; font-family: 'Space Grotesk', system-ui, sans-serif; }
+.ff-d { font-family: ${T.font.display}; }
+.ff-b { font-family: ${T.font.body}; }
+button { cursor: pointer; font-family: ${T.font.body}; }
 button:focus-visible, input:focus-visible { outline: 2px solid ${C.recovery}; outline-offset: 2px; border-radius: 12px; }
 button:active { transform: scale(.985); }
 @keyframes popIn { 0%{transform:scale(.6);opacity:0} 70%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
@@ -40,23 +47,6 @@ button:active { transform: scale(.985); }
 @media (prefers-reduced-motion: reduce){ .orb-live,.eq span,.pop,.chip-in{animation:none} button:active{transform:none} }
 `;
 
-const TTS_ENDPOINT = "/api/tts";
-const KYLE_VOICE = "ZAIovxRU9FXNYmauX8CL";
-
-// Build-time mode gate: only VITE_-prefixed env vars are inlined by Vite.
-// Netlify (prototype) builds never set this — server mode is droplet-only.
-const SERVER_MODE = import.meta.env.VITE_SERVER_MODE === "1";
-
-const SPOKEN_WORDS = [
-  [/\bDB\b/g, "dumbbell"],
-  [/\bEZ-?Bar\b/gi, "easy bar"],
-  [/\bRDL\b/g, "Romanian deadlift"],
-  [/\bAMRAP\b/gi, "as many reps as possible"],
-  [/\bBW\b/g, "bodyweight"],
-  [/\b1RM\b/g, "one rep max"],
-  [/\bHRV\b/g, "heart rate variability"],
-];
-const speechify = (t) => SPOKEN_WORDS.reduce((s, [re, w]) => s.replace(re, w), t);
 
 // ---- Data ----
 const workout = {
@@ -96,375 +86,18 @@ const cheers = [
 const parseWeight = (load) => { const m = load.match(/\d+/); return m ? parseInt(m[0], 10) : null; };
 const parseReps = (reps) => { const m = reps.match(/\d+(?!.*\d)/); return m ? parseInt(m[0], 10) : 10; };
 
-const EX_LIB = [
-  // ---- Existing 25 ----
-  { name: "Barbell Bench Press", equipment: "Barbell", muscles: "Chest · Shoulders · Triceps", base: 185, video: "4Y2ZdHCOXok",
-    blurb: "The standard for upper body pressing strength. Build it heavy and control the bar the whole way down.",
-    cues: ["Feet planted, slight arch, shoulder blades pinned back", "Bar touches mid-chest — no bouncing", "Drive up and slightly back toward the rack"] },
-  { name: "Seated DB Shoulder Press", equipment: "Dumbbell", muscles: "Shoulders · Triceps", base: 55, video: "vlFGTI5JzjI",
-    blurb: "Builds overhead strength and shoulder stability without a spotter. Go through a full range every rep.",
-    cues: ["Ribs down — don't flare at the bottom", "Elbows about 30° in front of your body", "Lock out without shrugging"] },
-  { name: "Incline DB Press", equipment: "Dumbbell", muscles: "Upper Chest · Shoulders", base: 60, video: "IP4oeKh1Sd4",
-    blurb: "Targets the upper chest that flat pressing misses. Keep the bench angle modest — steep angles turn it into a shoulder press.",
-    cues: ["Bench at 30° — higher shifts load to shoulders", "Lower until upper arm dips just below parallel", "Press up and slightly together"] },
-  { name: "Cable Lateral Raise", equipment: "Cable", muscles: "Side Delts", base: 15, video: "Sp8be0IFNvk",
-    blurb: "Isolates the side delt with constant tension the whole rep — better than dumbbells for building width.",
-    cues: ["Lead with the elbow, not the hand", "Stop at shoulder height", "Two seconds down, every rep"] },
-  { name: "Overhead Rope Extension", equipment: "Cable", muscles: "Triceps", base: 42, video: "Fwl0T1_giQ0",
-    blurb: "Hits the long head of the triceps with a deep stretch overhead — a finisher that adds real arm size.",
-    cues: ["Elbows stay close to your ears", "Full stretch at the bottom", "Squeeze hard at lockout"] },
-  { name: "Push-Up Finisher", equipment: "Bodyweight", muscles: "Chest · Triceps · Core", base: 0, video: "I9fsqKE5XHo",
-    blurb: "Bodyweight finisher for max reps — burns out what heavy pressing left in the tank.",
-    cues: ["One straight line, head to heels", "Chest to an inch off the floor", "Stop one rep before form breaks"] },
-  { name: "Deadlift", equipment: "Barbell", muscles: "Back · Glutes · Hamstrings", base: 225, video: "XxWcirHIwVo",
-    blurb: "The king of posterior chain lifts. Build the pull from the floor, not the back.",
-    cues: ["Bar over mid-foot before you pull", "Push the floor away — hips and shoulders rise together", "Lock out with glutes, not lower back"] },
-  { name: "Pull-Up", equipment: "Bodyweight", muscles: "Back · Biceps", base: 0, video: "eGo4IYlbE5g",
-    blurb: "The gold standard for back width. Full hang to chin over the bar, every rep.",
-    cues: ["Start from a dead hang, shoulders engaged", "Pull elbows down and back, not just up", "Chin clears the bar under control"] },
-  { name: "Barbell Row", equipment: "Barbell", muscles: "Back · Biceps", base: 135, video: "FWJR5Ve8bnQ",
-    blurb: "Builds back thickness and pulling strength. Keep the torso angle locked — don't let the hips rise on the pull.",
-    cues: ["Hinge to roughly 45°, flat back", "Pull the bar to your lower ribs", "No jerking — control the weight down"] },
-  { name: "Seated Cable Row", equipment: "Cable", muscles: "Back · Biceps", base: 120, video: "vwHG9Jfu4sw",
-    blurb: "Builds mid-back thickness with a controlled, strict pull — no momentum needed.",
-    cues: ["Sit tall, chest up through the whole rep", "Pull to your stomach, elbows close", "Pause and squeeze the shoulder blades together"] },
-  { name: "Barbell Curl", equipment: "Barbell", muscles: "Biceps", base: 65, video: "QZEqB6wUPxQ",
-    blurb: "The classic mass builder for the biceps. Strict form beats heavier weight swung with the hips.",
-    cues: ["Elbows pinned to your sides", "Curl without swinging the torso", "Lower all the way — no partial reps"] },
-  { name: "Back Squat", equipment: "Barbell", muscles: "Quads · Glutes", base: 205, video: "my0tLDaWyDU",
-    blurb: "The foundational lower body lift. Depth and a braced core matter more than the number on the bar.",
-    cues: ["Brace hard before you unrack", "Hips and knees break together, sit between your heels", "Drive through the whole foot to stand"] },
-  { name: "Romanian Deadlift", equipment: "Barbell", muscles: "Hamstrings · Glutes", base: 155, video: "5zmlnbWb-g4",
-    blurb: "Builds hamstring strength through a deep stretch. This is a hip hinge, not a squat — keep the bar close.",
-    cues: ["Soft knees, hinge at the hips", "Bar stays close, sliding down your thighs", "Stop when you feel the hamstring stretch, not lower back rounding"] },
-  { name: "Walking Lunge", equipment: "Dumbbell", muscles: "Quads · Glutes", base: 40, video: "Pbmj6xPo-Hw",
-    blurb: "Unilateral leg work that exposes and fixes side-to-side imbalances.",
-    cues: ["Step long enough for a 90° front knee", "Torso stays tall, no leaning forward", "Push through the front heel to stand"] },
-  { name: "Leg Press", equipment: "Machine", muscles: "Quads · Glutes", base: 270, video: "FNTd_mxtWmo",
-    blurb: "Loads the legs heavy with the back fully supported — a safe way to push volume.",
-    cues: ["Feet shoulder-width on the platform", "Knees track over your toes, don't cave in", "Don't lock out hard or let hips lift off the pad"] },
-  { name: "Standing Calf Raise", equipment: "Machine", muscles: "Calves", base: 90, video: "k8ipHzKeAkQ",
-    blurb: "Builds calf size and ankle strength through a full range of motion — most people cut this rep short.",
-    cues: ["Full stretch at the bottom", "Rise all the way onto the toes", "Pause a beat at the top before lowering"] },
-  { name: "Push Press", equipment: "Barbell", muscles: "Shoulders · Triceps", base: 115, video: "gFmV302JErc",
-    blurb: "Uses leg drive to move more weight overhead than a strict press — builds explosive pressing power.",
-    cues: ["Slight dip, straight down, straight up", "Drive through the legs, not the arms first", "Punch through and lock out overhead"] },
-  { name: "Weighted Pull-Up", equipment: "Bodyweight", muscles: "Back · Biceps", base: 25, video: "Sj7k-tOFdsM",
-    blurb: "Adds external load once bodyweight pull-ups get easy — the next step for back strength.",
-    cues: ["Start from a dead hang under load", "Pull without kipping or swinging", "Full lockout at the bottom every rep"] },
-  { name: "Close-Grip Bench Press", equipment: "Barbell", muscles: "Triceps · Chest", base: 155, video: "UYJsFzqdgK4",
-    blurb: "Shifts bench press emphasis onto the triceps with a narrower grip. Elbows track close, not flared.",
-    cues: ["Hands just inside shoulder width", "Elbows track close to the body on the way down", "Drive up focusing on tricep lockout"] },
-  { name: "EZ-Bar Curl", equipment: "Barbell", muscles: "Biceps", base: 60, video: "5NsFLGUf0Fo",
-    blurb: "The angled grip takes stress off the wrists while still loading the biceps heavy.",
-    cues: ["Elbows stay tucked at your sides", "Curl through a full range, no bouncing", "Control the lowering — don't just drop it"] },
-  { name: "Triceps Pushdown", equipment: "Cable", muscles: "Triceps", base: 55, video: "8WL0m0vLAPo",
-    blurb: "Simple, effective triceps isolation with constant cable tension top to bottom.",
-    cues: ["Elbows locked at your sides the whole set", "Extend fully without leaning on the bar", "Control the return — don't let the weight stack slam"] },
-  { name: "Kettlebell Swing", equipment: "Kettlebell", muscles: "Glutes · Hamstrings · Core", base: 53, video: "DqkYuWR4zRI",
-    blurb: "A hip-hinge power move that trains the posterior chain explosively — this is a hip snap, not a squat or an arm lift.",
-    cues: ["Hinge the hips back, load the hamstrings", "Snap the hips forward — the arms just follow", "Bell floats to chest height, no shoulder lifting"] },
-  { name: "Rowing Sprint", equipment: "Machine", muscles: "Full Body · Conditioning", base: 0, video: "mrexeRFo4UM",
-    blurb: "A full-body conditioning piece — legs drive the power, arms finish the pull.",
-    cues: ["Legs drive first, then hips, then arms", "Keep the back flat through the whole stroke", "Recover in the same order you drove — arms, hips, legs"] },
-  { name: "Sled Push", equipment: "Machine", muscles: "Quads · Glutes · Conditioning", base: 180, video: "9XRRXaUpnLk",
-    blurb: "Brutal, low-skill leg conditioning with almost zero eccentric load — safe to push hard.",
-    cues: ["Low shin angle, drive from the balls of your feet", "Short, powerful steps — don't overstride", "Keep the arms locked, let the legs do the work"] },
-  { name: "Plank Hold", equipment: "Bodyweight", muscles: "Core", base: 0, video: "6LqqeBtFn9M",
-    blurb: "Builds core stability under time, not reps — the whole point is resisting movement, not creating it.",
-    cues: ["Straight line from head to heels", "Squeeze glutes and brace the abs, don't let hips sag", "Breathe — don't hold your breath through the set"] },
-  // ---- New 25 ----
-  { name: "Dumbbell Bench Press", equipment: "Dumbbell", muscles: "Chest · Triceps", base: 65, video: "YQ2s_Y7g5Qk",
-    blurb: "Dumbbells let each arm work independently and add a deeper stretch than a barbell bench.",
-    cues: ["Elbows at about 45° to your torso", "Lower until upper arms are level with the bench", "Press up and slightly in without clanking the dumbbells"] },
-  { name: "One-Arm DB Row", equipment: "Dumbbell", muscles: "Back · Biceps", base: 70, video: "pYcpY20QaE8",
-    blurb: "Trains each side of the back independently and lets you load heavier with a braced position.",
-    cues: ["Flat back, brace the free hand on the bench", "Pull the elbow up and back, not out", "Squeeze at the top, control it down"] },
-  { name: "Goblet Squat", equipment: "Kettlebell", muscles: "Quads · Glutes", base: 60, video: "MxsFDhcyFyE",
-    blurb: "The front-loaded weight forces an upright torso — a great way to groove squat depth and pattern.",
-    cues: ["Hold the bell tight to your chest", "Sit straight down between your heels", "Elbows brush your knees at the bottom"] },
-  { name: "Barbell Hip Thrust", equipment: "Barbell", muscles: "Glutes · Hamstrings", base: 225, video: "EF7jXP17DPE",
-    blurb: "The most direct way to overload the glutes. Full lockout at the top is the whole rep.",
-    cues: ["Upper back braced on the bench, chin tucked", "Drive through the heels to full hip extension", "Squeeze glutes hard at the top, don't hyperextend the low back"] },
-  { name: "Lat Pulldown", equipment: "Cable", muscles: "Back · Biceps", base: 140, video: "qaJhYsCkX2s",
-    blurb: "Builds pulling strength and back width for anyone not yet doing full pull-ups.",
-    cues: ["Grip just outside shoulder width", "Pull to your upper chest, lead with the elbows", "Control the bar back up — don't let it yank you"] },
-  { name: "Face Pull", equipment: "Cable", muscles: "Rear Delts · Upper Back", base: 45, video: "UMGpxwhsy_k",
-    blurb: "The best corrective move for rounded shoulders — high reps, light weight, done consistently.",
-    cues: ["Pull to your face, not your chest", "Elbows finish high, above shoulder height", "Externally rotate at the end — thumbs point back"] },
-  { name: "Hammer Curl", equipment: "Dumbbell", muscles: "Biceps · Forearms", base: 35, video: "8XLxfXROrTo",
-    blurb: "The neutral grip shifts work onto the brachialis and forearms for thicker-looking arms.",
-    cues: ["Palms face each other the whole rep", "Elbows stay pinned at your sides", "Curl and lower under control, no swinging"] },
-  { name: "Bulgarian Split Squat", equipment: "Dumbbell", muscles: "Quads · Glutes", base: 40, video: "HBYGeyb4sSM",
-    blurb: "Brutal single-leg work that builds strength and exposes imbalances a back squat hides.",
-    cues: ["Rear foot elevated, most of your weight on the front leg", "Drop straight down, front knee tracks over the toes", "Drive through the front heel to stand"] },
-  { name: "Leg Extension", equipment: "Machine", muscles: "Quads", base: 110, video: "m0FOpMEgero",
-    blurb: "Pure quad isolation — a good finisher after compound leg work, not a replacement for it.",
-    cues: ["Back flat against the pad", "Extend to full lockout, squeeze the quads", "Lower under control — don't let the stack drop"] },
-  { name: "Lying Leg Curl", equipment: "Machine", muscles: "Hamstrings", base: 90, video: "n5WDXD_mpVY",
-    blurb: "Isolates the hamstrings through knee flexion — complements the hip-hinge work RDLs and deadlifts do.",
-    cues: ["Hips stay flat on the pad", "Curl through a full range, squeeze at the top", "Lower slowly — don't let momentum take over"] },
-  { name: "Front Squat", equipment: "Barbell", muscles: "Quads · Core", base: 165, video: "G-Vamqoy8qM",
-    blurb: "The front-rack position forces an upright torso and hammers the quads harder than a back squat.",
-    cues: ["Elbows up, bar resting on your front delts", "Stay upright — the torso can't lean forward here", "Drive up through mid-foot, elbows stay high"] },
-  { name: "Overhead Press", equipment: "Barbell", muscles: "Shoulders · Triceps", base: 115, video: "_RlRDWO2jfg",
-    blurb: "The strict standing press — builds raw shoulder strength with no leg drive to cheat with.",
-    cues: ["Brace the core, squeeze the glutes", "Bar path stays close, just past your face", "Lock out overhead, head through at the top"] },
-  { name: "Dips", equipment: "Bodyweight", muscles: "Chest · Triceps", base: 0, video: "BRBVKxMb1RQ",
-    blurb: "A heavy bodyweight pressing move — lean forward for chest, stay upright for triceps.",
-    cues: ["Lean forward slightly to bias the chest", "Lower until upper arms are about parallel", "Press up without flaring the elbows wide"] },
-  { name: "Cable Chest Fly", equipment: "Cable", muscles: "Chest", base: 35, video: "HXVtFoExms0",
-    blurb: "Isolates the chest through a wide arc with constant tension a dumbbell fly can't match.",
-    cues: ["Slight bend in the elbows, hold it", "Bring hands together in front of your chest", "Control the stretch back — don't let the cables yank your arms"] },
-  { name: "Incline Bench Press", equipment: "Barbell", muscles: "Upper Chest · Shoulders", base: 155, video: "5kyLUGVq_pk",
-    blurb: "Builds the upper chest with heavier loading than dumbbells allow at the same incline.",
-    cues: ["Bench at 30–45°, don't go steeper", "Bar touches just below the collarbone", "Drive up and slightly back toward the rack"] },
-  { name: "Preacher Curl", equipment: "Barbell", muscles: "Biceps", base: 55, video: "sxA__DoLsgo",
-    blurb: "The pad locks out body english — pure bicep tension from a dead stop every rep.",
-    cues: ["Upper arms flat against the pad", "Lower all the way to a full stretch", "Curl without lifting off the pad"] },
-  { name: "Skull Crusher", equipment: "Barbell", muscles: "Triceps", base: 60, video: "OQ4TWXkZjTc",
-    blurb: "Loads the triceps heavy through a deep stretch — control the bar, this isn't the exercise to rush.",
-    cues: ["Elbows point at the ceiling, don't flare out", "Lower the bar to your forehead, not your chest", "Extend through the triceps, not the shoulders"] },
-  { name: "DB Lateral Raise", equipment: "Dumbbell", muscles: "Side Delts", base: 20, video: "3VcKaXpzqRo",
-    blurb: "The classic shoulder-width builder — light weight, strict form, no momentum.",
-    cues: ["Slight bend in the elbows, lead with them", "Raise to shoulder height, no higher", "Lower slowly — don't let gravity do the work"] },
-  { name: "Barbell Shrug", equipment: "Barbell", muscles: "Traps", base: 185, video: "KbsQ1E8Hg0o",
-    blurb: "Direct trap work — straight up and down, no rolling the shoulders.",
-    cues: ["Arms stay straight the whole rep", "Shrug straight up toward your ears", "Pause at the top, lower under control"] },
-  { name: "Cable Crunch", equipment: "Cable", muscles: "Abs", base: 70, video: "AV5PmZJIrrw",
-    blurb: "Lets you load the abs directly with weight instead of just bodyweight reps.",
-    cues: ["Kneel tall, rope at your ears", "Crunch by flexing the spine, not pulling with the arms", "Exhale hard at the bottom of each rep"] },
-  { name: "Hanging Leg Raise", equipment: "Bodyweight", muscles: "Abs · Hip Flexors", base: 0, video: "Pr1ieGZ5atk",
-    blurb: "Advanced core work that hits the lower abs harder than most floor exercises.",
-    cues: ["Dead hang, avoid swinging", "Raise legs by curling the pelvis, not just lifting the legs", "Lower under control — don't let momentum take over"] },
-  { name: "Farmer's Carry", equipment: "Dumbbell", muscles: "Grip · Core · Traps", base: 90, video: "Fkzk_RqlYig",
-    blurb: "Simple loaded carry that builds grip, core bracing, and trap strength all at once.",
-    cues: ["Stand tall, shoulders back, don't lean", "Grip hard the entire walk", "Take controlled steps — don't let the weight swing"] },
-  { name: "Box Jump", equipment: "Bodyweight", muscles: "Quads · Glutes · Power", base: 0, video: "Fk4KjYsLfSg",
-    blurb: "Trains explosive power — land soft and reset each rep instead of chaining reps fast.",
-    cues: ["Swing the arms to drive the jump", "Land soft with knees bent", "Step down — don't jump down off the box"] },
-  { name: "Arnold Press", equipment: "Dumbbell", muscles: "Shoulders", base: 45, video: "6Z15_WdXmVw",
-    blurb: "The rotation hits all three heads of the deltoid, not just the front like a standard press.",
-    cues: ["Start with palms facing you at shoulder height", "Rotate palms out as you press overhead", "Reverse the rotation on the way down"] },
-  { name: "Chest-Supported Row", equipment: "Machine", muscles: "Back · Biceps", base: 90, video: "0UBRfiO4zDs",
-    blurb: "The chest pad removes any momentum from the low back — pure, strict back tension.",
-    cues: ["Chest pinned to the pad the whole set", "Pull elbows back, squeeze the shoulder blades", "Control the weight back to a full stretch"] },
-];
-const VIDEO_IDS = Object.fromEntries(EX_LIB.map((e) => [e.name, e.video]));
-const EX_INFO = Object.fromEntries(EX_LIB.map((e) => [e.name, e]));
 
-// ---- Deterministic exercise history ----
-function exHistory(name) {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash += name.charCodeAt(i);
-  const base = EX_BASE[name];
-  const isReps = base === 0 || (base === undefined && /Push-Up|Plank/.test(name));
-  // working max ≈ est. 1RM above the day-to-day load; PR triple sits between the two
-  const baseMax = base > 0 ? Math.round((base * 1.25) / 5) * 5 : 95 + (hash % 40) * 5;
-  const pr = isReps
-    ? { label: `${15 + (hash % 12)} reps`, date: "Aug 14" }
-    : { label: `${Math.round(((base > 0 ? base : baseMax / 1.25) * 1.15) / 5) * 5} lb × 3`, date: "Aug 9" };
-  const dipWeek = (hash % 5) + 2;
-  const series = Array.from({ length: 8 }, (_, k) => {
-    const wk = k + 1;
-    let lb = baseMax * (0.82 + k * 0.026);
-    if (wk === dipWeek) lb *= 0.97;
-    return { wk: `W${wk}`, lb: Math.round(lb / 5) * 5 };
-  });
-  return { pr, baseMax, series };
-}
 
 // ---- Calendar (TrainHeroic-style strip) ----
-const DAY_MS = 86400000;
-const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-const pad2 = (n) => String(n).padStart(2, "0");
-const iso = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const fmtLong = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-const fmtMonth = (d) => `${d.toLocaleDateString("en-US", { month: "short" }).toUpperCase()} '${String(d.getFullYear()).slice(2)}`;
-const WD = ["S", "M", "T", "W", "T", "F", "S"];
-
 const TODAY = startOfDay(new Date());
 const CAL_DAYS = Array.from({ length: 42 }, (_, i) => new Date(TODAY.getTime() + (i - 28) * DAY_MS));
 
-// 5-session cycle, 2 rest days a week; phased so today is always Push Day A
-const sessionCycle = [
-  { name: "Push Day A", duration: "45 min", focus: "Chest · Shoulders · Triceps", exs: [
-      { n: "Barbell Bench Press", base: 185 },
-      { n: "Seated DB Shoulder Press", base: 55 },
-      { n: "Incline DB Press", base: 60 },
-      { n: "Cable Lateral Raise", base: 15 },
-      { n: "Overhead Rope Extension", base: 42 },
-      { n: "Push-Up Finisher", base: 0 },
-    ] },
-  { name: "Pull Day A", duration: "50 min", focus: "Back · Biceps · Rear Delts", exs: [
-      { n: "Deadlift", base: 225 },
-      { n: "Pull-Up", base: 0 },
-      { n: "Barbell Row", base: 135 },
-      { n: "Seated Cable Row", base: 120 },
-      { n: "Barbell Curl", base: 65 },
-    ] },
-  { name: "Leg Day", duration: "55 min", focus: "Quads · Glutes · Hamstrings", exs: [
-      { n: "Back Squat", base: 205 },
-      { n: "Romanian Deadlift", base: 155 },
-      { n: "Walking Lunge", base: 40 },
-      { n: "Leg Press", base: 270 },
-      { n: "Standing Calf Raise", base: 90 },
-    ] },
-  { name: "Upper B", duration: "40 min", focus: "Shoulders · Arms", exs: [
-      { n: "Push Press", base: 115 },
-      { n: "Weighted Pull-Up", base: 25 },
-      { n: "Close-Grip Bench Press", base: 155 },
-      { n: "EZ-Bar Curl", base: 60 },
-      { n: "Triceps Pushdown", base: 55 },
-    ] },
-  { name: "Conditioning", duration: "30 min", focus: "Engine · Core", exs: [
-      { n: "Kettlebell Swing", base: 53 },
-      { n: "Rowing Sprint", base: 0 },
-      { n: "Sled Push", base: 180 },
-      { n: "Plank Hold", base: 0 },
-    ] },
-];
-function buildDoneBlocks(exs, i) {
-  const letters = "ABCDEF";
-  let totalSets = 0, totalVolume = 0;
-  const blocks = exs.map((ex, j) => {
-    const numSets = 3 + ((i + j) % 2); // 3 or 4
-    const sets = [];
-    for (let k = 0; k < numSets; k++) {
-      const reps = 5 + ((i * 3 + j * 5 + k * 2) % 8); // 5–12
-      const delta = (((i + j * 2 + k) % 5) - 2) * 5;   // -10..10, mult of 5
-      const w = ex.base === 0 ? 0 : ex.base + delta;
-      sets.push({ reps, w });
-    }
-    totalSets += numSets;
-    totalVolume += sets.reduce((s, st) => s + st.reps * st.w, 0);
-    return { letter: letters[j], name: ex.n, sets };
-  });
-  return { blocks, totalSets, totalVolume };
-}
-function buildSchedule() {
-  const offs = [];
-  for (let o = -28; o <= 13; o++) {
-    const r = ((o % 7) + 7) % 7;
-    if (r === 3 || r === 6) continue; // rest days
-    offs.push(o);
-  }
-  const zero = offs.indexOf(0);
-  const map = {};
-  offs.forEach((o, i) => {
-    if (o === -12 || o === -19) return; // missed sessions — gaps in the dots
-    const t = sessionCycle[(((i - zero) % 5) + 5) % 5];
-    const d = new Date(TODAY.getTime() + o * DAY_MS);
-    if (o < 0) {
-      const { blocks, totalSets, totalVolume } = buildDoneBlocks(t.exs, i);
-      map[iso(d)] = {
-        ...t, status: "done", blocks, sets: totalSets, volume: totalVolume,
-        minutes: 38 + ((i * 7) % 16),
-        readiness: 62 + ((i * 11) % 30),
-        intensity: 5 + ((i * 7) % 5),
-      };
-    } else {
-      map[iso(d)] = { ...t, status: "planned" };
-    }
-  });
-  return map;
-}
-const EX_BASE = Object.fromEntries(EX_LIB.map((e) => [e.name, e.base]));
-const SCHEDULE = buildSchedule();
-const DEVICE_OPTIONS = ["Samsung Galaxy Watch", "Apple Watch", "Garmin", "Whoop", "Fitbit", "Oura Ring", "Polar", "No device"];
-
-// ---- History export (CSV) ----
-const csvField = (v) => {
-  const s = String(v);
-  return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-function buildHistoryCsv(todayLog, todayDone) {
-  const rows = [["date", "session", "block", "exercise", "set", "reps", "weight_lb", "volume_lb"]];
-  const doneDates = Object.keys(SCHEDULE).filter((k) => SCHEDULE[k].status === "done").sort();
-  doneDates.forEach((date) => {
-    const entry = SCHEDULE[date];
-    entry.blocks.forEach((b) => {
-      b.sets.forEach((s, si) => {
-        rows.push([date, entry.name, b.letter, b.name, si + 1, s.reps, s.w, s.reps * s.w]);
-      });
-    });
-  });
-  if (todayDone && todayLog.length) {
-    const counts = {};
-    todayLog.forEach((l) => {
-      counts[l.i] = (counts[l.i] || 0) + 1;
-      const w = l.w || 0;
-      rows.push([iso(TODAY), workout.name, "ABCDEF"[l.i], workout.exercises[l.i].name, counts[l.i], l.reps, w, w * l.reps]);
-    });
-  }
-  return rows.map((r) => r.map(csvField).join(",")).join("\n");
-}
-
-// ---- Active-workout header helpers ----
-const BLOCK_TYPES = ["Strength / Power", "Strength / Power", "Hypertrophy", "Hypertrophy", "Accessory", "Finisher"];
-function lastFor(name) {
-  for (let o = 1; o <= 28; o++) {
-    const d = new Date(TODAY.getTime() - o * DAY_MS);
-    const e = SCHEDULE[iso(d)];
-    if (!e || e.status !== "done") continue;
-    const block = e.blocks.find((b) => b.name === name);
-    if (!block) continue;
-    const sets = block.sets;
-    if (sets.every((s) => s.w === 0)) {
-      const maxReps = Math.max(...sets.map((s) => s.reps));
-      return `${sets.length}×${maxReps} reps`;
-    }
-    const maxW = Math.max(...sets.map((s) => s.w));
-    return `${sets.length}×${sets[sets.length - 1].reps} @ ${maxW} lb`;
-  }
-  return null;
-}
-
-// ---- Readiness trend ----
-const READINESS_TODAY = 82;
-const readinessSeriesFor = (todayScore) => {
-  const todayIso = iso(TODAY);
-  const series = [];
-  for (let o = -9; o <= 0; o++) {
-    const d = new Date(TODAY.getTime() + o * DAY_MS);
-    const k = iso(d);
-    const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    if (k === todayIso) {
-      series.push({ d: label, v: todayScore, today: true });
-    } else {
-      const e = SCHEDULE[k];
-      if (e && e.readiness != null) series.push({ d: label, v: e.readiness });
-    }
-  }
-  return series;
-};
-const longAvg = (() => {
-  const vals = Object.values(SCHEDULE).filter((e) => e.readiness != null).map((e) => e.readiness);
-  return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
-})();
+// NULL WITH NO CHECK-INS: THERE IS NO INVENTED SCORE TO AVERAGE ANY MORE.
 const recentAvgFor = (series) => {
   const last3 = series.slice(-3);
+  if (!last3.length) return null;
   return Math.round(last3.reduce((s, p) => s + p.v, 0) / last3.length);
 };
-
-// ---- Morning check-in ----
-// 7 questions, 4 answers each; answer index IS its point value (0..3), max 21
-const CHECKIN_QS = [
-  { key: "hours",    q: "How much sleep did you get?",
-    opts: ["Under 5 hours", "5–6 hours", "6–7 hours", "7 or more"] },
-  { key: "sleep",    q: "How did you sleep?",
-    opts: ["Tossed and turned", "Woke up a few times", "Mostly solid", "Slept like a rock"] },
-  { key: "soreness", q: "How's your body feeling?",
-    opts: ["Beat up — everything aches", "Sore in a few spots", "A little stiff", "Fresh and loose"] },
-  { key: "energy",   q: "Where's your energy right now?",
-    opts: ["Running on empty", "Dragging a bit", "Steady", "Fully charged"] },
-  { key: "stress",   q: "How's your head?",
-    opts: ["Overloaded", "Carrying some stress", "Mostly clear", "Calm and focused"] },
-  { key: "fuel",     q: "How was your eating yesterday?",
-    opts: ["Barely ate, or all junk", "Hit and miss", "Pretty solid", "Dialed in"] },
-  { key: "drive",    q: "How much do you want to train today?",
-    opts: ["Not at all", "I'll show up", "Ready to work", "Can't wait"] },
-];
 
 // ---- Bits ----
 const Label = ({ children }) => (
@@ -478,64 +111,9 @@ const Pill = ({ children, tone, style }) => (
     background: tone === "energy" ? "rgba(41,171,226,.13)" : "rgba(122,203,239,.12)",
     color: tone === "energy" ? C.energy : C.recovery, ...style }}>{children}</span>
 );
-const Badge = ({ letter }) => (
-  <div style={{ width: 26, height: 26, borderRadius: "50%", border: `1px solid ${C.lineStrong}`, background: C.surface2,
-    display: "flex", alignItems: "center", justifyContent: "center", color: C.energy, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{letter}</div>
-);
-const IconStat = ({ Icon, n, t }) => (
-  <div style={{ flex: 1, textAlign: "center" }}>
-    <Icon size={15} color={C.muted} style={{ margin: "0 auto" }} />
-    <div className="ff-d" style={{ fontSize: 20, fontWeight: 800, color: C.text, lineHeight: 1, marginTop: 4 }}>{n}</div>
-    <div style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: ".1em", marginTop: 3, fontWeight: 600 }}>{t}</div>
-  </div>
-);
 
-function HartMark({ size = 30 }) {
-  return (
-    <img src="/brand/workhart_mark.png" alt="" aria-hidden="true"
-      style={{ height: size, width: "auto", display: "block" }} />
-  );
-}
 
-function Ring({ score, label = "Readiness" }) {
-  const r = 52, circ = 2 * Math.PI * r;
-  return (
-    <div style={{ position: "relative", width: 126, height: 126, flexShrink: 0 }}>
-      <svg width="126" height="126" viewBox="0 0 128 128" role="img" aria-label={`${label} ${score} of 100`}>
-        <circle cx="64" cy="64" r={r} fill="none" stroke={C.line} strokeWidth="9" />
-        <circle cx="64" cy="64" r={r} fill="none" stroke={C.recovery} strokeWidth="9" strokeLinecap="round"
-          strokeDasharray={circ} strokeDashoffset={circ * (1 - score / 100)} transform="rotate(-90 64 64)" />
-      </svg>
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-        <div className="ff-d" style={{ fontSize: 40, fontWeight: 800, color: C.text, lineHeight: 1 }}>{score}</div>
-        <div className="ff-b" style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: ".12em", marginTop: 2 }}>{label}</div>
-      </div>
-    </div>
-  );
-}
-
-function Sheet({ title, onClose, children }) {
-  return (
-    <div role="dialog" aria-modal="true" onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 50,
-        display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 430, background: C.surface, borderRadius: "22px 22px 0 0",
-          border: `1px solid ${C.line}`, padding: "18px 20px 28px", maxHeight: "82vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span className="ff-d" style={{ fontSize: 22, fontWeight: 700, color: C.text, textTransform: "uppercase" }}>{title}</span>
-          <button onClick={onClose} aria-label="Close"
-            style={{ width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.muted, flexShrink: 0 }}>
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function CalendarStrip({ selected, onSelect, doneToday, dotFor, labelFor }) {
+function CalendarStrip({ selected, onSelect, dotFor, labelFor }) {
   const todayIso = iso(TODAY);
   const rowRef = useRef(null);
   const cellRefs = useRef({});
@@ -557,14 +135,9 @@ function CalendarStrip({ selected, onSelect, doneToday, dotFor, labelFor }) {
       <div ref={rowRef} className="cal-row" style={{ display: "flex", gap: 4, overflowX: "auto", padding: "0 14px 4px" }}>
         {CAL_DAYS.map((d) => {
           const k = iso(d);
-          const e = SCHEDULE[k];
           const isSel = k === selected, isToday = k === todayIso;
-          const dot = dotFor
-            ? (dotFor(k) || "transparent")
-            : (e ? ((e.status === "done" || (isToday && doneToday)) ? C.recovery : C.energy) : "transparent");
-          const label = labelFor
-            ? labelFor(k, d)
-            : `${fmtLong(d)}${e ? ` — ${e.name}${e.status === "done" ? ", completed" : ", planned"}` : ", rest day"}`;
+          const dot = dotFor(k) || "transparent";
+          const label = labelFor(k, d);
           return (
             <button key={k} ref={(el) => { cellRefs.current[k] = el; }} onClick={() => onSelect(k)} aria-pressed={isSel}
               aria-label={label}
@@ -609,34 +182,6 @@ const stepBtn = {
   color: C.text, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
 };
 
-// ---- Fuel ----
-const FUEL_QUICK = [
-  { name: "Protein shake", kcal: 160, protein: 30, carbs: 5, fat: 3 },
-  { name: "Chicken & rice", kcal: 520, protein: 45, carbs: 55, fat: 12 },
-  { name: "Greek yogurt", kcal: 150, protein: 15, carbs: 9, fat: 4 },
-];
-function loadFuelLog() {
-  try { return JSON.parse(localStorage.getItem("workhart.fuelLog")) || {}; } catch (e) { return {}; }
-}
-function saveFuelLog(log) { localStorage.setItem("workhart.fuelLog", JSON.stringify(log)); }
-const DEFAULT_FUEL_TARGETS = { kcal: 2400, protein: 160 };
-function loadFuelTargets() {
-  try {
-    const v = JSON.parse(localStorage.getItem("workhart.fuelTargets"));
-    return v && typeof v === "object" ? { ...DEFAULT_FUEL_TARGETS, ...v } : { ...DEFAULT_FUEL_TARGETS };
-  } catch (e) { return { ...DEFAULT_FUEL_TARGETS }; }
-}
-function saveFuelTargets(t) { localStorage.setItem("workhart.fuelTargets", JSON.stringify(t)); }
-
-// ---- Server API (server mode only) ----
-// Thin fetch wrapper — same-origin cookie session, JSON body when present.
-async function apiCall(path, opts) {
-  return fetch(path, {
-    credentials: "same-origin",
-    headers: opts?.body ? { "Content-Type": "application/json" } : undefined,
-    ...opts,
-  });
-}
 // Postgres date/timestamp columns arrive JSON-serialized as full ISO strings
 // (e.g. "2026-09-02T00:00:00.000Z") — reduce to the "YYYY-MM-DD" key the rest
 // of the app already keys on.
@@ -668,8 +213,7 @@ function checkinsToMap(rows) {
   for (const r of rows) out[dayKey(r.day)] = { score: r.score, answers: r.answers };
   return out;
 }
-// Server-mode readiness trend: today + prior days from real checkin rows only
-// (no mock SCHEDULE fallback — that stays prototype-only per the ask).
+// Readiness trend: today + prior days from real checkin rows only.
 function readinessSeriesForServer(checkinsMap, todayScore) {
   const todayIso = iso(TODAY);
   const series = [];
@@ -677,16 +221,15 @@ function readinessSeriesForServer(checkinsMap, todayScore) {
     const d = new Date(TODAY.getTime() + o * DAY_MS);
     const k = iso(d);
     const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    if (k === todayIso) series.push({ d: label, v: todayScore, today: true });
+    if (k === todayIso) { if (todayScore != null) series.push({ d: label, v: todayScore, today: true }); }
     else if (checkinsMap[k]) series.push({ d: label, v: checkinsMap[k].score });
   }
   return series;
 }
 
-// Server-mode assignment -> engine shape. exercise_key IS the EX_LIB name
+// Assignment -> engine shape. exercise_key IS the EX_LIB name
 // string (no separate key field) -- fall back gracefully when a key has no
 // EX_LIB match (custom/typo'd keys still render, just without cues/video).
-const FALLBACK_CUE = "Stay tight and control the tempo.";
 function activeWorkoutFromAssignment(w) {
   const blocks = w.blocks || [];
   const exercises = blocks.map((b) => {
@@ -712,71 +255,34 @@ function activeWorkoutFromAssignment(w) {
   };
 }
 
-const PROGRAMS = [
-  { name: "40 Day Fitness",             meta: "40 days · 5 sessions/week",                     blurb: "Kyle's total-body reset. Show up, follow the day, get strong.", free: true },
-  { name: "Runner's Workout",           meta: "8 weeks · 4 runs + 2 lifts/week",               blurb: "Engine work plus the lifting that keeps runners durable.", price: "$29" },
-  { name: "Strength & Flexibility",     meta: "6 weeks · 3 lifts + 3 mobility days/week",      blurb: "Build strength without losing range of motion.", price: "$29" },
-  { name: "Kettlebell Engine",          meta: "4 weeks · 3 sessions/week",                     blurb: "One bell, big conditioning. Swings, carries, complexes.", price: "$19" },
-  { name: "One-on-One with Coach Kyle", meta: "Monthly · custom programming + weekly check-ins", blurb: "Direct line to Kyle. Your plan, adjusted every week.", price: "$149/mo" },
-];
-
-const P40_TEMPLATES = [
-  { name: "Foundation Push", focus: "Chest · Shoulders · Triceps", exs: [
-    ["Barbell Bench Press", "4 × 6–8"], ["Incline DB Press", "3 × 10"], ["Seated DB Shoulder Press", "3 × 8–10"],
-    ["DB Lateral Raise", "3 × 12–15"], ["Triceps Pushdown", "3 × 12"], ["Push-Up Finisher", "1 × AMRAP"]] },
-  { name: "Foundation Pull", focus: "Back · Biceps", exs: [
-    ["Deadlift", "4 × 5"], ["Lat Pulldown", "3 × 10"], ["Barbell Row", "3 × 8"],
-    ["Face Pull", "3 × 15"], ["Hammer Curl", "3 × 12"]] },
-  { name: "Foundation Legs", focus: "Quads · Glutes · Hamstrings", exs: [
-    ["Back Squat", "4 × 6–8"], ["Romanian Deadlift", "3 × 8–10"], ["Walking Lunge", "3 × 12"],
-    ["Leg Extension", "3 × 12–15"], ["Standing Calf Raise", "4 × 15"]] },
-  { name: "Full Body Strength", focus: "Total body", exs: [
-    ["Front Squat", "4 × 6"], ["Overhead Press", "4 × 6–8"], ["Chest-Supported Row", "3 × 10"],
-    ["Barbell Hip Thrust", "3 × 8–10"], ["Plank Hold", "3 × 45s"]] },
-  { name: "Engine & Core", focus: "Conditioning · Core", exs: [
-    ["Kettlebell Swing", "5 × 15"], ["Goblet Squat", "3 × 12"], ["Farmer's Carry", "4 × 40yd"],
-    ["Cable Crunch", "3 × 15"], ["Rowing Sprint", "6 × 250m"]] },
-];
-const PROGRAM_40 = Array.from({ length: 40 }, (_, i) => {
-  const day = i + 1, wd = i % 7;               // wd 3 and 6 are rest days → 5 sessions/week
-  if (wd === 3 || wd === 6) return { day, rest: true };
-  const workoutIndex = i - Math.floor(i / 7) * 2 - (wd > 3 ? 1 : 0); // count of workout days before this one
-  return { day, ...P40_TEMPLATES[workoutIndex % 5] };
-});
 
 // ---- App ----
-export default function Workhart() {
-  const [screen, setScreen] = useState(SERVER_MODE ? "boot" : "login");
-  // ---- Server mode: auth + hydration state (unused, harmless, in prototype mode) ----
-  const [authStage, setAuthStage] = useState("email"); // "email" | "sent"
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState("");
-  const [authExpired, setAuthExpired] = useState(false);
+// SIGN-IN LIVES IN src/app/App.jsx; THIS COMPONENT STARTS FROM A SESSION AND HANDS 401s BACK THROUGH onSignedOut.
+export default function Workhart({ session, onSignedOut }) {
+  const [screen, setScreen] = useState("boot");
   const [writeError, setWriteError] = useState("");
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
-  const [serverUser, setServerUser] = useState(null); // bootstrap `user` row (server mode)
+  const [serverUser, setServerUser] = useState(null); // bootstrap `user` row
   const [serverAssignments, setServerAssignments] = useState([]); // bootstrap `assignments`
   const [serverLogs, setServerLogs] = useState([]); // bootstrap `workoutLogs`
-  // ---- Server mode: messaging (U6, ask 32) ----
+  // ---- Messaging (U6, ask 32) ----
   const [unreadMessages, setUnreadMessages] = useState(0); // bootstrap count, zeroed after the athlete's own read POST
   const [threadMessages, setThreadMessages] = useState([]);
   const [threadBusy, setThreadBusy] = useState(false);
   const [msgDraft, setMsgDraft] = useState("");
   const [msgBusy, setMsgBusy] = useState(false);
   const [msgError, setMsgError] = useState("");
-  const firstName = (SERVER_MODE && serverUser?.name ? serverUser.name : "Alex").split(" ")[0];
-  // Athlete-side assignment lookup + engine data (server mode only; prototype
-  // mode never populates serverAssignments, so activeWorkout === the mock).
+  const firstName = (serverUser?.name || session?.name || "").split(" ")[0];
+  // Athlete-side assignment lookup + engine data. With no assignment today the
+  // Train tab still falls back to the built-in `workout` until W.7 rebuilds it.
   const assignmentForDay = (dayIso) =>
     serverAssignments.find((a) => dayKey(a.scheduled_for) === dayIso && a.status !== "skipped") || null;
-  const todayAssignment = SERVER_MODE ? assignmentForDay(iso(TODAY)) : null;
+  const todayAssignment = assignmentForDay(iso(TODAY));
   const activeWorkout = useMemo(
-    () => (SERVER_MODE && todayAssignment ? activeWorkoutFromAssignment(todayAssignment.workout) : workout),
+    () => (todayAssignment ? activeWorkoutFromAssignment(todayAssignment.workout) : workout),
     [todayAssignment]
   );
-  // ---- Console (admin, server mode) ----
+  // ---- Console (admin) ----
   const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder" | "inbox" | "thread" | "drafts" | "draftDetail"
   const [roster, setRoster] = useState([]);
   const [rosterBusy, setRosterBusy] = useState(false);
@@ -814,27 +320,19 @@ export default function Workhart() {
   const [builderLibEq, setBuilderLibEq] = useState("All");
   const [builderBusy, setBuilderBusy] = useState(false);
   const [builderError, setBuilderError] = useState("");
-  const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState("");
-  const [importResult, setImportResult] = useState(null);
   const [foodUnavailable, setFoodUnavailable] = useState(false);
   const [device, setDevice] = useState(() => localStorage.getItem("workhart.device") || "");
-  const [pickingDevice, setPickingDevice] = useState(false);
   const [survey, setSurvey] = useState({});
   const [checkStep, setCheckStep] = useState(0);
-  const [readyToday, setReadyToday] = useState(() => {
-    try {
-      const s = JSON.parse(localStorage.getItem(`workhart.readiness.${iso(TODAY)}`));
-      return s?.score ?? READINESS_TODAY;
-    } catch { return READINESS_TODAY; }
-  });
+  // NULL UNTIL TODAY'S CHECK-IN EXISTS: A SKIPPED CHECK-IN SHOWS NO SCORE RATHER THAN A MADE-UP ONE.
+  const [readyToday, setReadyToday] = useState(null);
   const readinessSeries = useMemo(
-    () => (SERVER_MODE ? readinessSeriesForServer(serverCheckins, readyToday) : readinessSeriesFor(readyToday)),
+    () => readinessSeriesForServer(serverCheckins, readyToday),
     [readyToday, serverCheckins]
   );
   const recentAvg = recentAvgFor(readinessSeries);
-  const baselineAvg = SERVER_MODE ? (averageScore(serverCheckins) ?? readyToday) : longAvg;
-  const histFor = (name) => SERVER_MODE ? realHistory(name, serverLogs) : exHistory(name);
+  const baselineAvg = averageScore(serverCheckins) ?? readyToday;
+  const histFor = (name) => realHistory(name, serverLogs);
   const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
   const [active, setActive] = useState(null);        // { i, done }
@@ -845,19 +343,13 @@ export default function Workhart() {
   const [summary, setSummary] = useState(null);      // {sets, volume, minutes}
   const [doneToday, setDoneToday] = useState(false);
   const [showReadiness, setShowReadiness] = useState(false);
-  const [program40Open, setProgram40Open] = useState(false);
-  const [p40Day, setP40Day] = useState(null);   // expanded day number or null
   const [rpe, setRpe] = useState(null);
   const [line, setLine] = useState(null);
   const [exDetail, setExDetail] = useState(null);    // exercise name or null
   const [exTab, setExTab] = useState("history");
   const [libQ, setLibQ] = useState("");
   const [libEq, setLibEq] = useState("All");
-  const [maxes, setMaxes] = useState({});
-  const [removed, setRemoved] = useState({});   // {`${iso}:${letter}`: true} — deleted log rows            // name -> working max lb
-  const [comments, setComments] = useState([]); // { text, ref, time }, ref: { name, date } | null
-  const [commentRef, setCommentRef] = useState(null);
-  const [draft, setDraft] = useState("");
+  const [maxes, setMaxes] = useState({});       // name -> working max lb
   const [voiceOn, setVoiceOn] = useState(true);
   const [talking, setTalking] = useState(false);
   const [coach, setCoach] = useState(() => {
@@ -869,8 +361,10 @@ export default function Workhart() {
   const coachFirst = coachName.split(/\s+/)[0];
   const coachInitial = coachFirst[0].toUpperCase();
   const [voiceStatus, setVoiceStatus] = useState(null);
-  const audioRef = useRef(null);
-  const ttsCache = useRef({});
+  const speakerRef = useRef(null);
+  if (speakerRef.current === null) {
+    speakerRef.current = createSpeaker({ onLine: setLine, onTalking: setTalking, onStatus: setVoiceStatus });
+  }
   const [devs, setDevs] = useState([
     { name: "Apple Watch", detail: "Heart rate · Workouts", on: true, icon: Watch },
     { name: "Whoop 5.0", detail: "Recovery · Strain · Sleep", on: true, icon: Activity },
@@ -878,8 +372,8 @@ export default function Workhart() {
     { name: "Oura Ring", detail: "Sleep · HRV", on: false, icon: Moon },
     { name: "Fitbit", detail: "Steps · Heart rate", on: false, icon: Activity },
   ]);
-  const [fuelLog, setFuelLog] = useState(loadFuelLog);
-  const [fuelTargets, setFuelTargets] = useState(loadFuelTargets);
+  const [fuelLog, setFuelLog] = useState({});
+  const [fuelTargets, setFuelTargets] = useState({ ...DEFAULT_FUEL_TARGETS });
   const [fuelDay, setFuelDay] = useState(iso(TODAY));
   const [foodQ, setFoodQ] = useState("");
   const [foodResults, setFoodResults] = useState(null);
@@ -891,58 +385,25 @@ export default function Workhart() {
     return Number.isFinite(v) ? v : 180;
   });
   const [fuelGoal, setFuelGoal] = useState("maintain"); // cut | maintain | build
-  const fuelIdRef = useRef(null);
-  if (fuelIdRef.current === null) {
-    const allFuel = Object.values(fuelLog).flat();
-    fuelIdRef.current = allFuel.reduce((m, e) => Math.max(m, e.id || 0), 0) + 1;
-  }
   const idx = useRef(0);
   const startedAt = useRef(null);
 
-  const stopAudio = () => {
-    if (audioRef.current) { try { audioRef.current.pause(); } catch (e) {} audioRef.current = null; }
-    setTalking(false);
-  };
-  const speak = async (text) => {
-    setLine(text);
-    if (!voiceOn) return;
-    stopAudio();
-    const spoken = speechify(text);
-    const vid = KYLE_VOICE;
-    try {
-      const cacheKey = vid + "|" + spoken;
-      let url = ttsCache.current[cacheKey];
-      if (!url) {
-        const res = await fetch(TTS_ENDPOINT, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: spoken, voice_id: vid }),
-        });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        url = URL.createObjectURL(await res.blob());
-        ttsCache.current[cacheKey] = url;
-      }
-      const a = new Audio(url);
-      audioRef.current = a;
-      a.onplay = () => setTalking(true);
-      a.onended = () => setTalking(false);
-      a.onerror = () => setTalking(false);
-      await a.play();
-      setVoiceStatus("ok");
-    } catch (e) { setVoiceStatus("fail"); setTalking(false); }
-  };
+  const stopAudio = () => speakerRef.current.stop();
+  const speak = (text) => speakerRef.current.speak(text);
+  useEffect(() => { speakerRef.current.setVoiceOn(voiceOn); }, [voiceOn]);
   useEffect(() => () => stopAudio(), []);
 
-  // ---- Server mode: sign-in state + bootstrap hydration ----
+  // ---- Bootstrap hydration ----
   const goSignedOut = () => {
-    setScreen("login");
-    setAuthStage("email");
+    stopAudio();
+    onSignedOut();
   };
   const hydrateFromBootstrap = (data) => {
     const profile = data.profile || {};
     if (data.user) setServerUser(data.user);
     if (data.user?.role === "admin") {
       // Kyle doesn't train here -- land in the console instead of the
-      // athlete tabs; skip survey/import entirely.
+      // athlete tabs; skip the survey entirely.
       setConsoleScreen("roster");
       setSelectedUserId(null);
       setOverview(null);
@@ -963,41 +424,29 @@ export default function Workhart() {
     const cmap = checkinsToMap(data.checkins || []);
     setServerCheckins(cmap);
     const todayEntry = cmap[iso(TODAY)];
-    setReadyToday(todayEntry ? todayEntry.score : READINESS_TODAY);
+    setReadyToday(todayEntry ? todayEntry.score : null);
 
-    const hasAnyData = (data.checkins || []).length > 0 || (data.fuel || []).length > 0;
-    if (!hasAnyData && localStorage.getItem("workhart.importDismissed") !== "1") {
-      setScreen("import");
-    } else if (todayEntry) {
+    if (todayEntry) {
       setScreen("app");
     } else {
       setScreen("survey");
     }
   };
   const refetchBootstrap = async () => {
-    const res = await apiCall("/api/bootstrap");
+    const res = await api("/api/bootstrap");
     if (res.status === 401) return goSignedOut();
     if (!res.ok) { setWriteError("Couldn't refresh your data — try again."); return; }
-    hydrateFromBootstrap(await res.json());
+    hydrateFromBootstrap(res.data);
   };
+  // App.jsx already confirmed the session with /api/auth/me; only bootstrap is fetched here.
   useEffect(() => {
-    if (!SERVER_MODE) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("auth") === "expired") {
-      setAuthExpired(true);
-      params.delete("auth");
-      const qs = params.toString();
-      window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
-    }
     (async () => {
       try {
-        const meRes = await apiCall("/api/auth/me");
-        if (meRes.status !== 200) { setScreen("login"); return; }
-        const bRes = await apiCall("/api/bootstrap");
-        if (bRes.status === 401 || !bRes.ok) { setScreen("login"); return; }
-        hydrateFromBootstrap(await bRes.json());
+        const bRes = await api("/api/bootstrap");
+        if (bRes.status === 401 || !bRes.ok) { goSignedOut(); return; }
+        hydrateFromBootstrap(bRes.data);
       } catch {
-        setScreen("login");
+        goSignedOut();
       }
     })();
   }, []); // eslint-disable-line
@@ -1027,20 +476,20 @@ export default function Workhart() {
   // Coach tab thread (U6, ask 32): fetch on open, then mark Kyle's messages
   // read and zero the nav badge.
   useEffect(() => {
-    if (!SERVER_MODE || tab !== "coach") return;
+    if (tab !== "coach") return;
     let cancelled = false;
     (async () => {
       setThreadBusy(true);
       try {
-        const res = await apiCall("/api/messages");
+        const res = await api("/api/messages");
         if (cancelled) return;
         if (res.status === 401) { setThreadBusy(false); return goSignedOut(); }
         if (!res.ok) { setThreadBusy(false); return; }
-        const rows = await res.json();
+        const rows = res.data;
         if (cancelled) return;
         setThreadMessages(rows);
         setThreadBusy(false);
-        const readRes = await apiCall("/api/messages/read", { method: "POST" });
+        const readRes = await api("/api/messages/read", { method: "POST" });
         if (!cancelled && readRes.ok) setUnreadMessages(0);
       } catch {
         if (!cancelled) setThreadBusy(false);
@@ -1054,10 +503,10 @@ export default function Workhart() {
     if (!body) return;
     setMsgBusy(true); setMsgError("");
     try {
-      const res = await apiCall("/api/messages", { method: "POST", body: JSON.stringify({ body }) });
+      const res = await api("/api/messages", { method: "POST", body: JSON.stringify({ body }) });
       if (res.status === 401) { setMsgBusy(false); return goSignedOut(); }
       if (!res.ok) { setMsgError("Couldn't send — try again."); setMsgBusy(false); return; }
-      const row = await res.json();
+      const row = res.data;
       setThreadMessages((cur) => [...cur, row]);
       setMsgDraft("");
       setMsgBusy(false);
@@ -1069,16 +518,16 @@ export default function Workhart() {
 
   // ---- Console (admin, server mode): data fetching ----
   useEffect(() => {
-    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "roster") return;
+    if (screen !== "console" || consoleScreen !== "roster") return;
     let cancelled = false;
     (async () => {
       setRosterBusy(true); setRosterError("");
       try {
-        const res = await apiCall("/api/admin/users");
+        const res = await api("/api/admin/users");
         if (cancelled) return;
         if (res.status === 401) { setRosterBusy(false); return goSignedOut(); }
         if (!res.ok) { setRosterError("Couldn't load the roster — try again."); setRosterBusy(false); return; }
-        const rows = await res.json();
+        const rows = res.data;
         if (cancelled) return;
         setRoster(rows.filter((u) => u.role !== "admin"));
         setRosterBusy(false);
@@ -1090,16 +539,16 @@ export default function Workhart() {
   }, [screen, consoleScreen]); // eslint-disable-line
 
   useEffect(() => {
-    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "dashboard" || !selectedUserId) return;
+    if (screen !== "console" || consoleScreen !== "dashboard" || !selectedUserId) return;
     let cancelled = false;
     (async () => {
       setOverviewBusy(true);
       try {
-        const res = await apiCall(`/api/admin/users/${selectedUserId}/overview`);
+        const res = await api(`/api/admin/users/${selectedUserId}/overview`);
         if (cancelled) return;
         if (res.status === 401) { setOverviewBusy(false); return goSignedOut(); }
         if (!res.ok) { setOverviewBusy(false); return; }
-        setOverview(await res.json());
+        setOverview(res.data);
         setOverviewBusy(false);
       } catch {
         if (!cancelled) setOverviewBusy(false);
@@ -1109,14 +558,14 @@ export default function Workhart() {
   }, [screen, consoleScreen, selectedUserId]); // eslint-disable-line
 
   useEffect(() => {
-    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "builder") return;
+    if (screen !== "console" || consoleScreen !== "builder") return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await apiCall("/api/admin/workouts");
+        const res = await api("/api/admin/workouts");
         if (cancelled) return;
         if (res.status === 401) return goSignedOut();
-        if (res.ok) setExistingWorkouts(await res.json());
+        if (res.ok) setExistingWorkouts(res.data);
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -1124,16 +573,16 @@ export default function Workhart() {
 
   // Inbox list (U6, ask 32).
   useEffect(() => {
-    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "inbox") return;
+    if (screen !== "console" || consoleScreen !== "inbox") return;
     let cancelled = false;
     (async () => {
       setInboxBusy(true); setInboxError("");
       try {
-        const res = await apiCall("/api/admin/inbox");
+        const res = await api("/api/admin/inbox");
         if (cancelled) return;
         if (res.status === 401) { setInboxBusy(false); return goSignedOut(); }
         if (!res.ok) { setInboxError("Couldn't load the inbox — try again."); setInboxBusy(false); return; }
-        setInbox(await res.json());
+        setInbox(res.data);
         setInboxBusy(false);
       } catch {
         if (!cancelled) { setInboxError("Couldn't load the inbox — try again."); setInboxBusy(false); }
@@ -1145,16 +594,16 @@ export default function Workhart() {
   // Admin thread view -- fetching also marks the user's unread rows read
   // server-side; reflect that locally in the inbox list (U6, ask 32).
   useEffect(() => {
-    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "thread" || !adminThreadUser) return;
+    if (screen !== "console" || consoleScreen !== "thread" || !adminThreadUser) return;
     let cancelled = false;
     (async () => {
       setAdminThreadBusy(true);
       try {
-        const res = await apiCall(`/api/admin/users/${adminThreadUser.id}/messages`);
+        const res = await api(`/api/admin/users/${adminThreadUser.id}/messages`);
         if (cancelled) return;
         if (res.status === 401) { setAdminThreadBusy(false); return goSignedOut(); }
         if (!res.ok) { setAdminThreadBusy(false); return; }
-        const body = await res.json();
+        const body = res.data;
         if (cancelled) return;
         setAdminThread(body.messages);
         setAdminThreadBusy(false);
@@ -1172,16 +621,16 @@ export default function Workhart() {
   // roster/inbox above; the pending count only reflects reality once this
   // tab has been opened at least once this session (matches the Inbox badge).
   useEffect(() => {
-    if (!SERVER_MODE || screen !== "console" || consoleScreen !== "drafts") return;
+    if (screen !== "console" || consoleScreen !== "drafts") return;
     let cancelled = false;
     (async () => {
       setDraftsBusy(true); setDraftsError("");
       try {
-        const res = await apiCall("/api/admin/drafts");
+        const res = await api("/api/admin/drafts");
         if (cancelled) return;
         if (res.status === 401) { setDraftsBusy(false); return goSignedOut(); }
         if (!res.ok) { setDraftsError("Couldn't load drafts — try again."); setDraftsBusy(false); return; }
-        setDrafts(await res.json());
+        setDrafts(res.data);
         setDraftsBusy(false);
       } catch {
         if (!cancelled) { setDraftsError("Couldn't load drafts — try again."); setDraftsBusy(false); }
@@ -1212,12 +661,12 @@ export default function Workhart() {
     if (!body || !adminThreadUser) return;
     setAdminMsgBusy(true); setAdminMsgError("");
     try {
-      const res = await apiCall(`/api/admin/users/${adminThreadUser.id}/messages`, {
+      const res = await api(`/api/admin/users/${adminThreadUser.id}/messages`, {
         method: "POST", body: JSON.stringify({ body }),
       });
       if (res.status === 401) { setAdminMsgBusy(false); return goSignedOut(); }
       if (!res.ok) { setAdminMsgError("Couldn't send — try again."); setAdminMsgBusy(false); return; }
-      const row = await res.json();
+      const row = res.data;
       setAdminThread((cur) => [...cur, row]);
       setInbox((cur) => cur.map((r) => (r.user.id === adminThreadUser.id
         ? { ...r, last_message: { sender: "kyle", body: row.body, created_at: row.created_at } }
@@ -1243,13 +692,13 @@ export default function Workhart() {
     try {
       // Persist any unsaved textarea edit first so approve sends the current body.
       if (draftBody !== selectedDraft.body) {
-        const saveRes = await apiCall(`/api/admin/drafts/${selectedDraft.id}`, {
+        const saveRes = await api(`/api/admin/drafts/${selectedDraft.id}`, {
           method: "PATCH", body: JSON.stringify({ body: draftBody }),
         });
         if (saveRes.status === 401) { setDraftActionBusy(false); return goSignedOut(); }
         if (!saveRes.ok) { setDraftActionError("Couldn't save your edit — try again."); setDraftActionBusy(false); return; }
       }
-      const res = await apiCall(`/api/admin/drafts/${selectedDraft.id}/approve`, { method: "POST" });
+      const res = await api(`/api/admin/drafts/${selectedDraft.id}/approve`, { method: "POST" });
       if (res.status === 401) { setDraftActionBusy(false); return goSignedOut(); }
       if (!res.ok) { setDraftActionError("Couldn't approve — try again."); setDraftActionBusy(false); return; }
       setDrafts((cur) => cur.filter((d) => d.id !== selectedDraft.id));
@@ -1264,7 +713,7 @@ export default function Workhart() {
     if (!selectedDraft) return;
     setDraftActionBusy(true); setDraftActionError("");
     try {
-      const res = await apiCall(`/api/admin/drafts/${selectedDraft.id}/reject`, { method: "POST" });
+      const res = await api(`/api/admin/drafts/${selectedDraft.id}/reject`, { method: "POST" });
       if (res.status === 401) { setDraftActionBusy(false); return goSignedOut(); }
       if (!res.ok) { setDraftActionError("Couldn't reject — try again."); setDraftActionBusy(false); return; }
       setDrafts((cur) => cur.filter((d) => d.id !== selectedDraft.id));
@@ -1278,12 +727,12 @@ export default function Workhart() {
   const toggleAutoSend = async (userId, next) => {
     setAutoSendBusy(true);
     try {
-      const res = await apiCall(`/api/admin/users/${userId}/settings`, {
+      const res = await api(`/api/admin/users/${userId}/settings`, {
         method: "PATCH", body: JSON.stringify({ kyleAutoSend: next }),
       });
       if (res.status === 401) { setAutoSendBusy(false); return goSignedOut(); }
       if (!res.ok) { setAutoSendBusy(false); return; }
-      const profile = await res.json();
+      const profile = res.data;
       setOverview((cur) => (cur ? { ...cur, profile } : cur));
       setAutoSendBusy(false);
     } catch {
@@ -1326,18 +775,18 @@ export default function Workhart() {
           ...(e.rest_sec !== "" && e.rest_sec != null ? { rest_sec: Number(e.rest_sec) } : {}),
           ...(e.note && e.note.trim() ? { note: e.note.trim() } : {}),
         }));
-        const wRes = await apiCall("/api/admin/workouts", {
+        const wRes = await api("/api/admin/workouts", {
           method: "POST",
           body: JSON.stringify({ title: builderTitle.trim(), blocks }),
         });
         if (wRes.status === 401) return goSignedOut();
         if (!wRes.ok) { setBuilderError("Couldn't save the workout — check the exercises and try again."); setBuilderBusy(false); return; }
-        const w = await wRes.json();
+        const w = wRes.data;
         workoutId = w.id;
       }
       if (!workoutId) { setBuilderError("Pick a workout first."); setBuilderBusy(false); return; }
 
-      const aRes = await apiCall("/api/admin/assignments", {
+      const aRes = await api("/api/admin/assignments", {
         method: "POST",
         body: JSON.stringify({ user_id: selectedUserId, workout_id: workoutId, scheduled_for: builderDate }),
       });
@@ -1346,8 +795,8 @@ export default function Workhart() {
       if (!aRes.ok) { setBuilderError("Couldn't create the assignment — try again."); setBuilderBusy(false); return; }
 
       setBuilderBusy(false);
-      const oRes = await apiCall(`/api/admin/users/${selectedUserId}/overview`);
-      if (oRes.ok) setOverview(await oRes.json());
+      const oRes = await api(`/api/admin/users/${selectedUserId}/overview`);
+      if (oRes.ok) setOverview(oRes.data);
       setConsoleScreen("dashboard");
     } catch {
       setBuilderError("Something went wrong — try again.");
@@ -1357,24 +806,17 @@ export default function Workhart() {
 
   const openReadiness = () => {
     setShowReadiness(true);
+    if (readyToday == null) return;
     speak(`Readiness ${readyToday}. ${recentAvg >= baselineAvg ? "Trending above your baseline — green light to push." : "A touch under baseline — keep the top sets honest."}`);
   };
 
   const openExercise = (name) => { setExDetail(name); setExTab("history"); };
-
-  const submitComment = () => {
-    if (!draft.trim()) return;
-    setComments([...comments, { text: draft.trim(), ref: commentRef, time: "Just now" }]);
-    setDraft("");
-    setCommentRef(null);
-  };
 
   const applyFuelAdd = (day, item) => {
     setFuelLog((cur) => {
       const prevRows = cur[day] ?? [];
       const dayLog = [...prevRows, item];
       const next = { ...cur, [day]: dayLog };
-      if (!SERVER_MODE) saveFuelLog(next);
 
       const prevProtein = prevRows.reduce((s, e) => s + (e.protein || 0), 0);
       const newProtein = dayLog.reduce((s, e) => s + (e.protein || 0), 0);
@@ -1389,45 +831,30 @@ export default function Workhart() {
   };
   const addFuel = async (entry) => {
     const day = fuelDay;
-    if (SERVER_MODE) {
-      const res = await apiCall("/api/fuel-logs", {
-        method: "POST",
-        body: JSON.stringify({
-          eaten_on: day, name: entry.name,
-          calories: Math.round(entry.kcal || 0),
-          protein_g: Math.round(entry.protein || 0),
-          carbs_g: Math.round(entry.carbs || 0),
-          fat_g: Math.round(entry.fat || 0),
-          source: "custom",
-        }),
-      });
-      if (res.status === 401) return goSignedOut();
-      if (!res.ok) { setWriteError("Couldn't save that food — try again."); return; }
-      const row = await res.json();
-      applyFuelAdd(day, { id: row.id, name: row.name, kcal: row.calories ?? 0, protein: row.protein_g ?? 0, carbs: row.carbs_g ?? 0, fat: row.fat_g ?? 0 });
-      setWriteError("");
-      return;
-    }
-    applyFuelAdd(day, {
-      id: fuelIdRef.current++, name: entry.name, brand: entry.brand,
-      kcal: entry.kcal || 0, protein: entry.protein || 0, carbs: entry.carbs || 0, fat: entry.fat || 0,
+    const res = await api("/api/fuel-logs", {
+      method: "POST",
+      body: JSON.stringify({
+        eaten_on: day, name: entry.name,
+        calories: Math.round(entry.kcal || 0),
+        protein_g: Math.round(entry.protein || 0),
+        carbs_g: Math.round(entry.carbs || 0),
+        fat_g: Math.round(entry.fat || 0),
+        source: "custom",
+      }),
     });
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't save that food — try again."); return; }
+    const row = res.data;
+    applyFuelAdd(day, { id: row.id, name: row.name, kcal: row.calories ?? 0, protein: row.protein_g ?? 0, carbs: row.carbs_g ?? 0, fat: row.fat_g ?? 0 });
+    setWriteError("");
   };
   const deleteFuel = async (id) => {
     const day = fuelDay;
-    if (SERVER_MODE) {
-      const res = await apiCall(`/api/fuel-logs/${id}`, { method: "DELETE" });
-      if (res.status === 401) return goSignedOut();
-      if (!res.ok) { setWriteError("Couldn't delete that entry — try again."); return; }
-      setFuelLog((cur) => ({ ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) }));
-      setWriteError("");
-      return;
-    }
-    setFuelLog((cur) => {
-      const next = { ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) };
-      saveFuelLog(next);
-      return next;
-    });
+    const res = await api(`/api/fuel-logs/${id}`, { method: "DELETE" });
+    if (res.status === 401) return goSignedOut();
+    if (!res.ok) { setWriteError("Couldn't delete that entry — try again."); return; }
+    setFuelLog((cur) => ({ ...cur, [day]: (cur[day] ?? []).filter((e) => e.id !== id) }));
+    setWriteError("");
   };
   const searchFood = async () => {
     const q = foodQ.trim();
@@ -1435,9 +862,9 @@ export default function Workhart() {
     setFoodBusy(true);
     setFoodUnavailable(false);
     try {
-      const res = await fetch("/api/food?q=" + encodeURIComponent(q));
+      const res = await foodSearch(q);
       if (!res.ok) throw new Error("HTTP " + res.status);
-      const json = await res.json();
+      const json = res.data || {};
       setFoodResults(Array.isArray(json.results) ? json.results : []);
     } catch (e) {
       setFoodResults([]);
@@ -1459,23 +886,18 @@ export default function Workhart() {
     setManualOpen(false);
   };
   const changeBodyweight = async (v) => {
-    if (!SERVER_MODE) {
-      setBodyweight(v);
-      localStorage.setItem("workhart.bodyweight", String(v));
-      return;
-    }
-    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ bodyweight: v }) });
+    const res = await api("/api/profile", { method: "PATCH", body: JSON.stringify({ bodyweight: v }) });
     if (res.status === 401) return goSignedOut();
     if (!res.ok) { setWriteError("Couldn't save bodyweight — try again."); return; }
-    const profile = await res.json();
+    const profile = res.data;
     setBodyweight(profile.bodyweight);
     setWriteError("");
   };
   const changeDevice = async (v) => {
-    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ device: v }) });
+    const res = await api("/api/profile", { method: "PATCH", body: JSON.stringify({ device: v }) });
     if (res.status === 401) return goSignedOut();
     if (!res.ok) { setWriteError("Couldn't save device — try again."); return; }
-    const profile = await res.json();
+    const profile = res.data;
     setDevice(profile.device);
     setWriteError("");
   };
@@ -1486,80 +908,26 @@ export default function Workhart() {
       kcal: Math.round((bodyweight * kcalMult) / 10) * 10,
       protein: Math.round(Math.round(bodyweight * proteinMult) / 5) * 5,
     };
-    if (!SERVER_MODE) {
-      setFuelTargets(next);
-      saveFuelTargets(next);
-      return;
-    }
-    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ fuelTargets: next }) });
+    const res = await api("/api/profile", { method: "PATCH", body: JSON.stringify({ fuelTargets: next }) });
     if (res.status === 401) return goSignedOut();
     if (!res.ok) { setWriteError("Couldn't save targets — try again."); return; }
-    const profile = await res.json();
+    const profile = res.data;
     setFuelTargets({ ...DEFAULT_FUEL_TARGETS, ...profile.fuelTargets });
     setWriteError("");
   };
-  // Coach name is a live-typed field — reflect keystrokes immediately (matches
-  // prototype's per-keystroke localStorage save) and persist async; on failure
-  // show the inline note without fighting the user's typing.
+  // Coach name is a live-typed field — reflect keystrokes immediately and
+  // persist async; on failure show the inline note without fighting the typing.
   const changeCoach = async (v) => {
     setCoach(v);
-    if (!SERVER_MODE) { localStorage.setItem("workhart.coach", v); return; }
-    const res = await apiCall("/api/profile", { method: "PATCH", body: JSON.stringify({ coach: v }) });
+    const res = await api("/api/profile", { method: "PATCH", body: JSON.stringify({ coach: v }) });
     if (res.status === 401) return goSignedOut();
     if (!res.ok) { setWriteError("Couldn't save coach name — try again."); return; }
     setWriteError("");
   };
-  const exportData = () => {
-    const checkins = {};
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith("workhart.readiness.")) continue;
-      try {
-        const v = JSON.parse(localStorage.getItem(key));
-        if (v && typeof v.score === "number" && v.answers) checkins[key.slice("workhart.readiness.".length)] = { score: v.score, answers: v.answers };
-      } catch {}
-    }
-    const payload = { checkins, fuelLog, bodyweight, fuelTargets, coach, device };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "workhart-export.json";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
   const handleSignOut = async () => {
-    await apiCall("/api/auth/logout", { method: "POST" }).catch(() => {});
+    await api("/api/auth/logout", { method: "POST" }).catch(() => {});
     setShowSettings(false);
     goSignedOut();
-  };
-  const skipImport = () => {
-    localStorage.setItem("workhart.importDismissed", "1");
-    setScreen(serverCheckins[iso(TODAY)] ? "app" : "survey");
-  };
-  const handleImportFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setImportError(""); setImportResult(null); setImportBusy(true);
-    try {
-      const text = await file.text();
-      const json = JSON.parse(text);
-      const res = await apiCall("/api/import", { method: "POST", body: JSON.stringify(json) });
-      if (res.status === 401) { setImportBusy(false); return goSignedOut(); }
-      if (res.status === 409) {
-        setImportError("This account already has data.");
-        setImportBusy(false);
-        await refetchBootstrap();
-        return;
-      }
-      if (!res.ok) { setImportError("Import failed — check the file and try again."); setImportBusy(false); return; }
-      const data = await res.json();
-      setImportResult(data.imported);
-      setImportBusy(false);
-      await refetchBootstrap();
-    } catch {
-      setImportError("Couldn't read that file.");
-      setImportBusy(false);
-    }
   };
 
   const start = () => {
@@ -1567,7 +935,7 @@ export default function Workhart() {
     setLog([]); setSummary(null); setRest(null); setRpe(null); setGrid({});
     startedAt.current = Date.now();
     setActive({ i: 0, done: 0 });
-    speak(`Welcome back, ${firstName}. Today is ${activeWorkout.name}. Warm up well — then we get after it.`);
+    speak(`Welcome back${firstName ? `, ${firstName}` : ""}. Today is ${activeWorkout.name}. Warm up well — then we get after it.`);
   };
 
   const finish = async (finalLog) => {
@@ -1577,30 +945,28 @@ export default function Workhart() {
     setActive(null); setRest(null); setDoneToday(true);
     speak(`Workout complete. Outstanding session — Coach ${coachFirst} will see today's numbers tonight.`);
 
-    if (SERVER_MODE) {
-      const perExerciseCount = {};
-      const sets = finalLog.map((l) => {
-        const setNo = (perExerciseCount[l.i] = (perExerciseCount[l.i] || 0) + 1);
-        const ex = activeWorkout.exercises[l.i];
-        return { exercise_key: ex.name, set_no: setNo, reps: l.reps, weight_lbs: l.w };
+    const perExerciseCount = {};
+    const sets = finalLog.map((l) => {
+      const setNo = (perExerciseCount[l.i] = (perExerciseCount[l.i] || 0) + 1);
+      const ex = activeWorkout.exercises[l.i];
+      return { exercise_key: ex.name, set_no: setNo, reps: l.reps, weight_lbs: l.w };
+    });
+    try {
+      const res = await api("/api/workout-logs", {
+        method: "POST",
+        body: JSON.stringify({
+          performed_at: new Date().toISOString(),
+          assignment_id: todayAssignment?.id,
+          notes: rpe ? `Session RPE: ${rpe}` : undefined,
+          sets,
+        }),
       });
-      try {
-        const res = await apiCall("/api/workout-logs", {
-          method: "POST",
-          body: JSON.stringify({
-            performed_at: new Date().toISOString(),
-            assignment_id: todayAssignment?.id,
-            notes: rpe ? `Session RPE: ${rpe}` : undefined,
-            sets,
-          }),
-        });
-        if (res.status === 401) return goSignedOut();
-        if (!res.ok) { setWriteError("Couldn't save that workout — your summary is still here."); return; }
-        setWriteError("");
-        await refetchBootstrap();
-      } catch {
-        setWriteError("Couldn't save that workout — your summary is still here.");
-      }
+      if (res.status === 401) return goSignedOut();
+      if (!res.ok) { setWriteError("Couldn't save that workout — your summary is still here."); return; }
+      setWriteError("");
+      await refetchBootstrap();
+    } catch {
+      setWriteError("Couldn't save that workout — your summary is still here.");
     }
   };
 
@@ -1651,171 +1017,12 @@ export default function Workhart() {
     }
   };
 
-  // ---- Boot (server mode: checking session before first paint) ----
+  // ---- Boot (bootstrap in flight) ----
   if (screen === "boot") {
     return (
       <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <style>{css}</style>
-        <HartMark size={54} />
-      </div>
-    );
-  }
-
-  // ---- Login ----
-  if (screen === "login") {
-    if (SERVER_MODE) {
-      const submitEmail = async () => {
-        const email = authEmail.trim();
-        if (!email) return;
-        setAuthBusy(true);
-        setAuthError("");
-        try {
-          const res = await apiCall("/api/auth/request-link", { method: "POST", body: JSON.stringify({ email }) });
-          if (!res.ok) { setAuthError("Something went wrong — try again."); setAuthBusy(false); return; }
-          setAuthStage("sent");
-        } catch {
-          setAuthError("Something went wrong — try again.");
-        }
-        setAuthBusy(false);
-      };
-      const submitPassword = async () => {
-        const email = authEmail.trim();
-        if (!email || !authPassword) return;
-        const password = authPassword;
-        setAuthBusy(true);
-        setAuthError("");
-        try {
-          const res = await apiCall("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-          setAuthPassword("");
-          if (res.ok) { await refetchBootstrap(); }
-          else if (res.status === 401) setAuthError("Wrong email or password.");
-          else if (res.status === 429) setAuthError("Too many attempts — try again later.");
-          else setAuthError("Something went wrong — try again.");
-        } catch {
-          setAuthPassword("");
-          setAuthError("Something went wrong — try again.");
-        }
-        setAuthBusy(false);
-      };
-      return (
-        <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <style>{css}</style>
-          <div style={{ width: "100%", maxWidth: 380 }}>
-            <div style={{ textAlign: "center", marginBottom: 40 }}>
-              <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <HartMark size={64} />
-              </div>
-              <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ width: "min(100%, 406px)", height: "auto", display: "block", margin: "0 auto" }} />
-            </div>
-
-            {authExpired && (
-              <div style={{ color: C.energy, fontSize: 12.5, marginBottom: 16, textAlign: "center" }}>
-                That link expired — request a new one.
-              </div>
-            )}
-
-            {authStage === "email" ? (
-              <>
-                <input aria-label="Email" placeholder="Email" type="email" autoComplete="username" value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") submitPassword(); }}
-                  style={inp} />
-                <input aria-label="Password" placeholder="Password" type="password" autoComplete="current-password" value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") submitPassword(); }}
-                  style={inp} />
-                {authError && <div style={{ color: C.energy, fontSize: 12, marginBottom: 10 }}>{authError}</div>}
-                <button onClick={submitPassword} disabled={authBusy || !authEmail.trim() || !authPassword}
-                  style={{ ...btnP, width: "100%", marginTop: 6, opacity: authBusy || !authEmail.trim() || !authPassword ? .5 : 1 }}>
-                  {authBusy ? "Signing in…" : "Sign in"}
-                </button>
-                <button onClick={submitEmail} disabled={authBusy || !authEmail.trim()}
-                  style={{ background: "none", border: "none", color: C.muted, fontSize: 12, textDecoration: "underline", padding: 0, display: "block", margin: "14px auto 0", opacity: authBusy || !authEmail.trim() ? .5 : 1 }}>
-                  Email me a sign-in link instead
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={{ color: C.body, fontSize: 14.5, lineHeight: 1.6, textAlign: "center", padding: "8px 0" }}>
-                  Check your email for a sign-in link.
-                </div>
-                <button onClick={() => { setAuthStage("email"); setAuthEmail(""); setAuthError(""); }}
-                  style={{ ...btnG, width: "100%", marginTop: 14 }}>
-                  Use a different email
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <style>{css}</style>
-        <div style={{ width: "100%", maxWidth: 380 }}>
-          <div style={{ textAlign: "center", marginBottom: 40 }}>
-            <div style={{ margin: "0 auto 18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <HartMark size={64} />
-            </div>
-            <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ width: "min(100%, 406px)", height: "auto", display: "block", margin: "0 auto" }} />
-          </div>
-          <input aria-label="Email" placeholder="Email" defaultValue="alex@email.com" style={inp} />
-          <input aria-label="Password" placeholder="Password" type="password" defaultValue="••••••••" style={inp} />
-
-          {device && !pickingDevice ? (
-            <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
-              <Watch size={16} color={C.recovery} />
-              <span style={{ color: C.body, fontSize: 13, flex: 1 }}>{device === "No device" ? "No device connected" : `${device} connected`}</span>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: device === "No device" ? C.muted : C.recovery }} />
-              <button onClick={() => setPickingDevice(true)} style={{ background: "none", border: "none", color: C.muted, fontSize: 12, textDecoration: "underline", padding: 0 }}>Change</button>
-            </div>
-          ) : (
-            <select
-              aria-label="Fitness device"
-              value={device}
-              onChange={(e) => { const v = e.target.value; localStorage.setItem("workhart.device", v); setDevice(v); setPickingDevice(false); }}
-              style={{ ...inp, color: device ? C.text : C.muted }}
-            >
-              <option value="" disabled>Connect your fitness device…</option>
-              {DEVICE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
-          )}
-
-          <button onClick={() => { const todayKey = `workhart.readiness.${iso(TODAY)}`; setScreen(localStorage.getItem(todayKey) ? "app" : "survey"); }} style={{ ...btnP, width: "100%", marginTop: 6 }}>Sign in</button>
-        </div>
-      </div>
-    );
-  }
-
-  // ---- Import (server mode: fresh account, no data yet) ----
-  if (screen === "import") {
-    return (
-      <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <style>{css}</style>
-        <div style={{ width: "100%", maxWidth: 380 }}>
-          <div style={{ textAlign: "center", marginBottom: 28 }}>
-            <div style={{ margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <HartMark size={54} />
-            </div>
-            <div className="ff-d" style={{ fontSize: 26, fontWeight: 700, color: C.text, textTransform: "uppercase" }}>Import your data</div>
-            <div style={{ color: C.muted, fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
-              Bring over check-ins and fuel logs from a WORKHART export file.
-            </div>
-          </div>
-          <Card>
-            <input aria-label="Import file" type="file" accept="application/json" onChange={handleImportFile} disabled={importBusy}
-              style={{ color: C.body, fontSize: 13, width: "100%" }} />
-            {importBusy && <div style={{ color: C.muted, fontSize: 12, marginTop: 10 }}>Importing…</div>}
-            {importError && <div style={{ color: C.energy, fontSize: 12, marginTop: 10 }}>{importError}</div>}
-            {importResult && (
-              <div style={{ color: C.body, fontSize: 13, marginTop: 10 }}>
-                Imported {importResult.checkins} check-in{importResult.checkins === 1 ? "" : "s"}, {importResult.fuel} fuel entr{importResult.fuel === 1 ? "y" : "ies"}
-                {importResult.skipped ? `, skipped ${importResult.skipped}` : ""}.
-              </div>
-            )}
-          </Card>
-          <button onClick={skipImport} style={{ ...btnG, width: "100%", marginTop: 14 }}>Skip — start fresh</button>
-        </div>
+        <Mark height={54} />
       </div>
     );
   }
@@ -1825,25 +1032,17 @@ export default function Workhart() {
     const finishSurvey = async (finalAnswers) => {
       const sum = Object.values(finalAnswers).reduce((s, v) => s + v, 0);
       const score = Math.round((sum / 21) * 100);
-      if (SERVER_MODE) {
-        const res = await apiCall("/api/checkins", {
-          method: "POST",
-          body: JSON.stringify({ day: iso(TODAY), score, answers: finalAnswers }),
-        });
-        if (res.status === 401) return goSignedOut();
-        if (!res.ok) { setWriteError("Couldn't save your check-in — try again."); return; }
-        const row = await res.json();
-        setServerCheckins((cur) => ({ ...cur, [iso(TODAY)]: { score: row.score, answers: row.answers } }));
-        setReadyToday(row.score);
-        setScreen("app");
-        speak(`Readiness logged at ${row.score}. ${row.score >= 75 ? "Green light — we push today." : row.score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
-        return;
-      }
-      const todayKey = `workhart.readiness.${iso(TODAY)}`;
-      localStorage.setItem(todayKey, JSON.stringify({ score, answers: finalAnswers }));
-      setReadyToday(score);
+      const res = await api("/api/checkins", {
+        method: "POST",
+        body: JSON.stringify({ day: iso(TODAY), score, answers: finalAnswers }),
+      });
+      if (res.status === 401) return goSignedOut();
+      if (!res.ok) { setWriteError("Couldn't save your check-in — try again."); return; }
+      const row = res.data;
+      setServerCheckins((cur) => ({ ...cur, [iso(TODAY)]: { score: row.score, answers: row.answers } }));
+      setReadyToday(row.score);
       setScreen("app");
-      speak(`Readiness logged at ${score}. ${score >= 75 ? "Green light — we push today." : score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
+      speak(`Readiness logged at ${row.score}. ${row.score >= 75 ? "Green light — we push today." : row.score >= 55 ? "Solid enough. We work smart today." : "Running low — we keep it tight and honest today."}`);
     };
     const q = CHECKIN_QS[checkStep];
     const pick = (i) => {
@@ -1908,7 +1107,7 @@ export default function Workhart() {
         <div style={{ width: "100%", maxWidth: 430, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-              <HartMark size={30} />
+              <Mark height={30} />
               <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ height: 19, width: "auto", display: "block" }} />
             </div>
             <button onClick={handleSignOut}
@@ -2427,7 +1626,7 @@ export default function Workhart() {
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <HartMark size={30} />
+            <Mark height={30} />
             <img src="/brand/workhart_text_logo.png" alt="Workhart" style={{ height: 19, width: "auto", display: "block" }} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2454,246 +1653,76 @@ export default function Workhart() {
             const isToday = selDay === todayIso;
             const selDate = new Date(selDay + "T00:00:00");
 
-            if (SERVER_MODE) {
-              const dayAssignment = assignmentForDay(selDay);
-              const isDayDone = dayAssignment?.status === "completed" || (isToday && doneToday);
-              const exCount = dayAssignment ? dayAssignment.workout.blocks.length : 0;
-              const dotFor = (k) => {
-                const a = assignmentForDay(k);
-                if (!a) return null;
-                return a.status === "completed" ? C.recovery : C.energy;
-              };
-              const labelFor = (k, d) => {
-                const a = assignmentForDay(k);
-                return `${fmtLong(d)}${a ? ` — ${a.workout.title}${a.status === "completed" ? ", completed" : ", planned"}` : ", no session"}`;
-              };
-              return (
-                <div>
-                  <CalendarStrip selected={selDay} onSelect={setSelDay} doneToday={doneToday} dotFor={dotFor} labelFor={labelFor} />
-                  <div style={{ color: C.muted, fontSize: 13, marginTop: 14 }}>{fmtLong(selDate)}</div>
-
-                  {isToday ? (
-                    <>
-                      <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Morning, {firstName}</h1>
-
-                      <Card role="button" tabIndex={0} aria-expanded={showReadiness} onClick={openReadiness}
-                        onKeyDown={(e) => { if (e.key === "Enter") openReadiness(); }}
-                        style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center", width: "100%", textAlign: "left" }}>
-                        <Ring score={readyToday} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ color: C.text, fontSize: 15, fontWeight: 600 }}>Ready to push</div>
-                          <div style={{ color: C.body, fontSize: 12.5, marginTop: 5, lineHeight: 1.55 }}>
-                            Check-in logged this morning.
-                          </div>
-                          <div style={{ color: C.muted, fontSize: 11, marginTop: 6 }}>View trend ›</div>
-                        </div>
-                      </Card>
-                    </>
-                  ) : (
-                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>
-                      {dayAssignment ? dayAssignment.workout.title : "No Session"}
-                    </h1>
-                  )}
-
-                  <Label>{isToday ? "Today's session" : "Scheduled session"}</Label>
-                  {dayAssignment ? (
-                    <Card>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                        <div>
-                          <div className="ff-d" style={{ fontSize: 27, fontWeight: 700, color: C.text, textTransform: "uppercase", lineHeight: 1 }}>{dayAssignment.workout.title}</div>
-                          <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{exCount} exercise{exCount === 1 ? "" : "s"}</div>
-                        </div>
-                        {isDayDone ? <Pill tone="recovery">Completed</Pill> : <Pill tone="energy">Planned</Pill>}
-                      </div>
-                      {isDayDone && isToday && summary && (
-                        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                          <MiniStat n={summary.sets} t="Sets" />
-                          <MiniStat n={summary.volume.toLocaleString()} t="lb volume" />
-                          <MiniStat n={summary.minutes} t="Minutes" />
-                          <MiniStat n={rpe ?? "–"} t="RPE" />
-                        </div>
-                      )}
-                      {isToday && (
-                        <button onClick={start} style={{ ...(isDayDone ? btnG : btnP), width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                          <Play size={17} fill={isDayDone ? "none" : C.inkOnEnergy} /> {isDayDone ? "Train again" : "Start workout"}
-                        </button>
-                      )}
-                    </Card>
-                  ) : (
-                    <Card>
-                      <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>
-                        {isToday ? `No session assigned. Check back once Coach ${coachFirst} schedules one.` : "No session assigned."}
-                      </div>
-                    </Card>
-                  )}
-                </div>
-              );
-            }
-
-            const entry = SCHEDULE[selDay];
+            const dayAssignment = assignmentForDay(selDay);
+            const isDayDone = dayAssignment?.status === "completed" || (isToday && doneToday);
+            const exCount = dayAssignment ? dayAssignment.workout.blocks.length : 0;
+            const dotFor = (k) => {
+              const a = assignmentForDay(k);
+              if (!a) return null;
+              return a.status === "completed" ? C.recovery : C.energy;
+            };
+            const labelFor = (k, d) => {
+              const a = assignmentForDay(k);
+              return `${fmtLong(d)}${a ? ` — ${a.workout.title}${a.status === "completed" ? ", completed" : ", planned"}` : ", no session"}`;
+            };
             return (
               <div>
-                <CalendarStrip selected={selDay} onSelect={setSelDay} doneToday={doneToday} />
+                <CalendarStrip selected={selDay} onSelect={setSelDay} doneToday={doneToday} dotFor={dotFor} labelFor={labelFor} />
                 <div style={{ color: C.muted, fontSize: 13, marginTop: 14 }}>{fmtLong(selDate)}</div>
 
-                {isToday && (
+                {isToday ? (
                   <>
-                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Morning, {firstName}</h1>
+                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Morning{firstName ? `, ${firstName}` : ""}</h1>
 
                     <Card role="button" tabIndex={0} aria-expanded={showReadiness} onClick={openReadiness}
                       onKeyDown={(e) => { if (e.key === "Enter") openReadiness(); }}
                       style={{ marginTop: 18, display: "flex", gap: 16, alignItems: "center", width: "100%", textAlign: "left" }}>
                       <Ring score={readyToday} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ color: C.text, fontSize: 15, fontWeight: 600 }}>Ready to push</div>
+                        <div style={{ color: C.text, fontSize: 15, fontWeight: 600 }}>{readyToday == null ? "No check-in yet" : "Ready to push"}</div>
                         <div style={{ color: C.body, fontSize: 12.5, marginTop: 5, lineHeight: 1.55 }}>
-                          7h 40m sleep · resting HR 54 · HRV up 6%. Synced from Whoop &amp; Apple Watch.
+                          {readyToday == null ? "You skipped this morning's check-in." : "Check-in logged this morning."}
                         </div>
                         <div style={{ color: C.muted, fontSize: 11, marginTop: 6 }}>View trend ›</div>
                       </div>
                     </Card>
+                  </>
+                ) : (
+                  <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>
+                    {dayAssignment ? dayAssignment.workout.title : "No Session"}
+                  </h1>
+                )}
 
-                    <Label>Today's session</Label>
-                    <Card>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                        <div>
-                          <div className="ff-d" style={{ fontSize: 27, fontWeight: 700, color: C.text, textTransform: "uppercase", lineHeight: 1 }}>{workout.name}</div>
-                          <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{workout.duration} · {workout.exercises.length} exercises · {workout.focus}</div>
-                        </div>
-                        {doneToday ? <Pill tone="recovery">Completed</Pill> : <Pill tone="energy">Planned</Pill>}
+                <Label>{isToday ? "Today's session" : "Scheduled session"}</Label>
+                {dayAssignment ? (
+                  <Card>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                      <div>
+                        <div className="ff-d" style={{ fontSize: 27, fontWeight: 700, color: C.text, textTransform: "uppercase", lineHeight: 1 }}>{dayAssignment.workout.title}</div>
+                        <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{exCount} exercise{exCount === 1 ? "" : "s"}</div>
                       </div>
-                      {doneToday && summary && (
-                        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                          <MiniStat n={summary.sets} t="Sets" />
-                          <MiniStat n={summary.volume.toLocaleString()} t="lb volume" />
-                          <MiniStat n={summary.minutes} t="Minutes" />
-                          <MiniStat n={rpe ?? "–"} t="RPE" />
-                        </div>
-                      )}
-                      <button onClick={start} style={{ ...(doneToday ? btnG : btnP), width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                        <Play size={17} fill={doneToday ? "none" : C.inkOnEnergy} /> {doneToday ? "Train again" : "Start workout"}
-                      </button>
-                    </Card>
-
-                    {!doneToday && (
-                      <>
-                        <Label>Coach instructions</Label>
-                        <Card>
-                          <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>
-                            Total-body tightness today — leave one rep in reserve on every top set, and film your last bench set.
-                          </div>
-                        </Card>
-
-                        <Label>Warm-up</Label>
-                        <Card style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                          <Badge letter="A" />
-                          <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>
-                            3 min easy row or jacks, then 2 rounds: 10 leg swings each side, 10 band pull-aparts, 5 slow push-ups.
-                          </div>
-                        </Card>
-                      </>
-                    )}
-
-                    <Label>This week</Label>
-                    <div style={{ display: "flex", gap: 10 }}>
-                      <Stat n={doneToday ? "5" : "4"} t="Workouts" />
-                      <Stat n={doneToday && summary ? String(182 + summary.minutes) : "182"} t="Minutes" />
-                      <Stat n="12" t="Week streak" hot />
+                      {isDayDone ? <Pill tone="recovery">Completed</Pill> : <Pill tone="energy">Planned</Pill>}
                     </div>
-
-                    <Label>From Coach {coachFirst}</Label>
-                    <Card>
-                      <div style={{ display: "flex", gap: 12 }}>
-                        <div style={ava}>{coachInitial}</div>
-                        <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.6 }}>
-                          Bench is trending up nicely — I bumped Thursday's top set to 190. Watch that bar path on your last set.
-                          <div style={{ color: C.muted, fontSize: 11.5, marginTop: 7 }}>Yesterday · reply in Coach tab</div>
-                        </div>
+                    {isDayDone && isToday && summary && (
+                      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                        <MiniStat n={summary.sets} t="Sets" />
+                        <MiniStat n={summary.volume.toLocaleString()} t="lb volume" />
+                        <MiniStat n={summary.minutes} t="Minutes" />
+                        <MiniStat n={rpe ?? "–"} t="RPE" />
                       </div>
-                    </Card>
-                  </>
-                )}
-
-                {!isToday && entry?.status === "done" && (() => {
-                  const blocks = entry.blocks.filter((b) => !removed[`${selDay}:${b.letter}`]);
-                  const vSets = blocks.reduce((n, b) => n + b.sets.length, 0);
-                  const vVolume = blocks.reduce((n, b) => n + b.sets.reduce((m, x) => m + x.reps * x.w, 0), 0);
-                  return (
-                  <>
-                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>{entry.name}</h1>
-
-                    <Label>Session log</Label>
-                    <Card>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                        <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{entry.duration} · {entry.focus}</div>
-                        <Pill tone="recovery">Completed</Pill>
-                      </div>
-                      <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
-                        <IconStat Icon={Check} n={`${blocks.length}/${entry.blocks.length}`} t="Blocks" />
-                        <IconStat Icon={Activity} n={entry.readiness} t="Readiness" />
-                        <IconStat Icon={Timer} n={entry.minutes} t="Minutes" />
-                        <IconStat Icon={Gauge} n={`${entry.intensity}/10`} t="Intensity" />
-                        <IconStat Icon={Dumbbell} n={vVolume.toLocaleString()} t="LB" />
-                      </div>
-                      {blocks.map((b) => {
-                        const reps = b.sets.map((s) => s.reps).join(", ");
-                        const bw = b.sets[0].w === 0;
-                        const weights = b.sets.map((s) => s.w).join(", ");
-                        return (
-                          <div key={b.letter} style={{ display: "flex", gap: 12, alignItems: "flex-start", marginTop: 14 }}>
-                            <button onClick={() => openExercise(b.name)}
-                              style={{ flex: 1, background: "none", border: "none", padding: 0, textAlign: "left", display: "flex", gap: 12, alignItems: "flex-start" }}>
-                              <Badge letter={b.letter} />
-                              <div style={{ flex: 1 }}>
-                                <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{b.name}</div>
-                                <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>
-                                  {bw ? `${reps} reps · bodyweight` : `${reps} @ ${weights} lb`}
-                                </div>
-                              </div>
-                              <ChevronDown size={16} color={C.muted} style={{ transform: "rotate(-90deg)", flexShrink: 0, marginTop: 4 }} />
-                            </button>
-                            <button aria-label={`Delete ${b.name} from log`} onClick={() => setRemoved({ ...removed, [`${selDay}:${b.letter}`]: true })}
-                              style={{ background: "none", border: "none", padding: "2px 2px 6px 6px", color: C.muted, flexShrink: 0, display: "flex" }}>
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 14 }}>Logged · synced to Coach {coachFirst}</div>
-                    </Card>
-                    <button onClick={() => { setCommentRef({ name: entry.name, date: fmtLong(selDate) }); setTab("coach"); }}
-                      style={{ background: "none", border: "none", color: C.recovery, fontSize: 13, fontWeight: 600, marginTop: 12, padding: "8px 0" }}>
-                      Comment on Session
-                    </button>
-                  </>
-                  );
-                })()}
-
-                {!isToday && entry?.status === "planned" && (
-                  <>
-                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>{entry.name}</h1>
-
-                    <Label>Scheduled session</Label>
-                    <Card>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                        <div style={{ color: C.muted, fontSize: 12.5, marginTop: 5 }}>{entry.duration} · {entry.focus}</div>
-                        <Pill tone="energy">Scheduled</Pill>
-                      </div>
-                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 7 }}>Unlocks on the day — Coach {coachFirst} may still adjust the plan.</div>
-                    </Card>
-                  </>
-                )}
-
-                {!isToday && !entry && (
-                  <>
-                    <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, lineHeight: 1.02, margin: "2px 0 0", textTransform: "uppercase" }}>Rest Day</h1>
-
-                    <Label>Recovery</Label>
-                    <Card style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                      <Moon size={22} color={C.recovery} />
-                      <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>Nothing on the plan. Sleep, eat, walk — the readiness score tomorrow will thank you.</div>
-                    </Card>
-                  </>
+                    )}
+                    {isToday && (
+                      <button onClick={start} style={{ ...(isDayDone ? btnG : btnP), width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                        <Play size={17} fill={isDayDone ? "none" : C.inkOnEnergy} /> {isDayDone ? "Train again" : "Start workout"}
+                      </button>
+                    )}
+                  </Card>
+                ) : (
+                  <Card>
+                    <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>
+                      {isToday ? `No session assigned. Check back once Coach ${coachFirst} schedules one.` : "No session assigned."}
+                    </div>
+                  </Card>
                 )}
               </div>
             );
@@ -2811,7 +1840,6 @@ export default function Workhart() {
             const rows = grid[active.i] || [];
             const totalReps = log.reduce((s, l) => s + l.reps, 0);
             const totalLb = log.reduce((s, l) => s + (l.w || 0) * l.reps, 0);
-            const last = SERVER_MODE ? null : lastFor(ex.name);
             const chipStyle = { background: C.surface, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 11px", fontSize: 11.5, fontWeight: 600, color: C.body };
             return (
               <div style={{ textAlign: "center", paddingTop: 14 }}>
@@ -2841,11 +1869,6 @@ export default function Workhart() {
                 <div style={{ color: C.muted, fontSize: 13.5, marginTop: 4 }}>Target {ex.reps} reps · {ex.load}</div>
 
                 <div style={{ display: "flex", gap: 7, justifyContent: "center", flexWrap: "wrap", marginTop: 10 }}>
-                  {last && (
-                    <button onClick={() => openExercise(ex.name)} style={chipStyle}>
-                      <span style={{ color: C.muted }}>Last </span>{last}
-                    </button>
-                  )}
                   {histFor(ex.name) && (
                     <button onClick={() => openExercise(ex.name)} style={chipStyle}>
                       <span style={{ color: C.muted }}>PR </span>{histFor(ex.name).pr.label}
@@ -3203,7 +2226,7 @@ export default function Workhart() {
               </Card>
 
               <button onClick={() => {
-                  const csv = SERVER_MODE ? buildServerHistoryCsv(serverLogs, serverAssignments) : buildHistoryCsv(log, doneToday);
+                  const csv = buildServerHistoryCsv(serverLogs, serverAssignments);
                   const blob = new Blob([csv], { type: "text/csv" });
                   const a = document.createElement("a");
                   a.href = URL.createObjectURL(blob);
@@ -3245,50 +2268,19 @@ export default function Workhart() {
                 <div style={{ aspectRatio: "16 / 9", background: C.surface2, position: "relative", display: "flex",
                   alignItems: "center", justifyContent: "center", borderRadius: "18px 18px 0 0", overflow: "hidden" }}>
                   <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", opacity: .12 }}>
-                    <HartMark size={90} />
+                    <Mark height={90} />
                   </div>
                   <div style={{ position: "absolute", top: 10, left: 10, fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
                     color: C.muted, background: "rgba(0,0,0,.35)", padding: "4px 8px", borderRadius: 6 }}>WEEKLY MESSAGE</div>
                   <div style={{ width: 54, height: 54, borderRadius: "50%", background: C.energy, display: "flex", alignItems: "center",
                     justifyContent: "center", boxShadow: "0 6px 18px rgba(41,171,226,.4)", position: "relative" }}>
-                    <Play size={22} color="#fff" fill="currentColor" />
+                    <Play size={22} color={T.color.onDeep} fill="currentColor" />
                   </div>
                 </div>
                 <div style={{ padding: "12px 16px" }}>
                   <div style={{ color: C.text, fontSize: 14.5, fontWeight: 600 }}>A word from Coach Kyle</div>
                   <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>This week's focus · 2:14</div>
                 </div>
-              </Card>
-
-              <Label>Programs</Label>
-              <Card style={{ padding: 0 }}>
-                {PROGRAMS.map((p, i) => (
-                  <div key={i}
-                    role={p.free ? "button" : undefined}
-                    tabIndex={p.free ? 0 : undefined}
-                    aria-disabled={p.free ? undefined : "true"}
-                    aria-expanded={p.free ? program40Open : undefined}
-                    onClick={p.free ? () => setProgram40Open(true) : undefined}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
-                      borderBottom: i < PROGRAMS.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                    <div style={{ flex: 1, opacity: p.free ? 1 : .55 }}>
-                      <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{p.meta}</div>
-                      <div style={{ color: C.body, fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>{p.blurb}</div>
-                    </div>
-                    {p.free ? (
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                        <Pill tone="recovery">Included</Pill>
-                        <ChevronRight size={16} color={C.muted} />
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                        <div style={{ color: C.muted, fontSize: 11.5, fontWeight: 600 }}>{p.price}</div>
-                        <Lock size={15} color={C.muted} />
-                      </div>
-                    )}
-                  </div>
-                ))}
               </Card>
 
               <Label>Recent updates</Label>
@@ -3309,8 +2301,7 @@ export default function Workhart() {
                 <MessageSquare size={16} /> Message Coach {coachFirst}
               </button>
 
-              {SERVER_MODE ? (
-                <>
+              <>
                   <Label>Messages</Label>
                   <Card style={{ padding: 0 }}>
                     {threadBusy ? (
@@ -3361,50 +2352,6 @@ export default function Workhart() {
                     </div>
                   </Card>
                 </>
-              ) : (
-                <>
-                  <Label>Session comments</Label>
-                  <Card style={{ padding: 0 }}>
-                    {comments.length ? comments.map((c, i) => (
-                      <div key={i} style={{ padding: "14px 16px", borderBottom: i < comments.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                        {c.ref && (
-                          <div style={{ marginBottom: 6 }}>
-                            <Pill tone="energy" style={{ fontSize: 10 }}>{c.ref.name} · {c.ref.date}</Pill>
-                          </div>
-                        )}
-                        <div style={{ color: C.body, fontSize: 13.5, lineHeight: 1.55 }}>{c.text}</div>
-                        <div style={{ color: C.muted, fontSize: 11.5, marginTop: 4 }}>{c.time} · seen by Coach {coachFirst}</div>
-                      </div>
-                    )) : (
-                      <div style={{ padding: 16, color: C.muted, fontSize: 12.5 }}>
-                        No comments yet — open a logged workout and tap Comment on Session.
-                      </div>
-                    )}
-                    <div style={{ borderTop: `1px solid ${C.line}`, padding: "12px 16px 16px" }}>
-                      {/* Reference chip tied to commentRef */}
-                      {commentRef && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                          <Pill tone="energy" style={{ fontSize: 10 }}>Re: {commentRef.name} · {commentRef.date}</Pill>
-                          <button aria-label="Clear session reference" onClick={() => setCommentRef(null)}
-                            style={{ width: 32, height: 32, minWidth: 32, background: "none", border: "none", color: C.muted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                            <X size={14} />
-                          </button>
-                        </div>
-                      )}
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input aria-label="Comment" placeholder="Write a comment…" value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) submitComment(); }}
-                          style={{ ...inp, marginBottom: 0, flex: 1, minHeight: 44 }} />
-                        <button onClick={submitComment} disabled={!draft.trim()}
-                          style={{ ...btnP, padding: "0 18px", minHeight: 44, opacity: draft.trim() ? 1 : .45, flexShrink: 0 }}>
-                          Send
-                        </button>
-                      </div>
-                    </div>
-                  </Card>
-                </>
-              )}
 
               <Label>Data your coach sees</Label>
               <Card style={{ padding: 0 }}>
@@ -3448,7 +2395,7 @@ export default function Workhart() {
               style={{ flex: 1, background: "none", border: "none", padding: "8px 4px", minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
               <div style={{ position: "relative" }}>
                 <Ic size={20} color={tab === key ? C.energy : C.muted} strokeWidth={tab === key ? 2.4 : 2} />
-                {key === "coach" && SERVER_MODE && unreadMessages > 0 && (
+                {key === "coach" && unreadMessages > 0 && (
                   <span aria-label={`${unreadMessages} unread message${unreadMessages === 1 ? "" : "s"}`}
                     style={{ position: "absolute", top: -3, right: -8, minWidth: 15, height: 15, borderRadius: 999,
                       background: C.energy, color: C.inkOnEnergy, fontSize: 9.5, fontWeight: 700, lineHeight: "15px",
@@ -3467,12 +2414,12 @@ export default function Workhart() {
             <div style={{ display: "flex", marginTop: 18 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: ".1em", fontWeight: 600 }}>Long-term average</div>
-                <div className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.text, marginTop: 4 }}>{baselineAvg}</div>
+                <div className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.text, marginTop: 4 }}>{baselineAvg ?? "–"}</div>
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ color: C.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: ".1em", fontWeight: 600 }}>Recent average</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                  <span className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.recovery }}>{recentAvg}</span>
+                  <span className="ff-d" style={{ fontSize: 34, fontWeight: 800, color: C.recovery }}>{recentAvg ?? "–"}</span>
                   {recentAvg >= baselineAvg
                     ? <TrendingUp size={18} color={C.recovery} />
                     : <TrendingDown size={18} color={C.recovery} />}
@@ -3522,68 +2469,6 @@ export default function Workhart() {
           </Sheet>
         )}
 
-        {program40Open && (
-          <Sheet title="40 Day Fitness" onClose={() => { setProgram40Open(false); setP40Day(null); }}>
-            <div style={{ color: C.muted, fontSize: 12.5, marginTop: 8 }}>40 days · 5 sessions a week · Coach Kyle</div>
-            {Array.from({ length: 6 }, (_, w) => w).map((w) => {
-              const weekDays = PROGRAM_40.slice(w * 7, w * 7 + 7);
-              return (
-                <div key={w}>
-                  <Label>Week {w + 1}</Label>
-                  <Card style={{ padding: 0 }}>
-                    {weekDays.map((d, i) => {
-                      const isOpen = p40Day === d.day;
-                      return (
-                        <div key={d.day} style={{ borderBottom: i < weekDays.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                          <div
-                            role={d.rest ? undefined : "button"}
-                            tabIndex={d.rest ? undefined : 0}
-                            onClick={d.rest ? undefined : () => setP40Day(isOpen ? null : d.day)}
-                            style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", cursor: d.rest ? "default" : "pointer" }}>
-                            <div className="ff-d" style={{ fontSize: 13, fontWeight: 700, letterSpacing: ".06em", color: d.rest ? C.muted : C.energy, width: 56, flexShrink: 0 }}>
-                              DAY {d.day}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              {d.rest ? (
-                                <>
-                                  <div style={{ color: C.muted, fontSize: 14 }}>Rest</div>
-                                  <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>Recover. Walk, stretch, sleep.</div>
-                                </>
-                              ) : (
-                                <>
-                                  <div style={{ color: C.text, fontSize: 14, fontWeight: 600 }}>{d.name}</div>
-                                  <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>{d.focus}</div>
-                                </>
-                              )}
-                            </div>
-                            {!d.rest && (
-                              <ChevronDown size={16} color={C.muted} style={{ transform: isOpen ? "none" : "rotate(-90deg)", flexShrink: 0, transition: "transform .15s" }} />
-                            )}
-                          </div>
-                          {!d.rest && isOpen && (
-                            <div style={{ padding: "0 16px 14px" }}>
-                              {d.exs.map(([name, target]) => (
-                                <div key={name} role="button" tabIndex={0}
-                                  onClick={() => openExercise(name)}
-                                  onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") openExercise(name); }}
-                                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
-                                  <img src={`https://i.ytimg.com/vi/${VIDEO_IDS[name]}/mqdefault.jpg`} alt="" width={44} height={26}
-                                    style={{ borderRadius: 6, objectFit: "cover", flexShrink: 0, background: C.surface2 }} />
-                                  <div style={{ color: C.text, fontSize: 13.5, fontWeight: 600, flex: 1, minWidth: 0 }}>{name}</div>
-                                  <div style={{ color: C.muted, fontSize: 11.5, whiteSpace: "nowrap" }}>{target}</div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </Card>
-                </div>
-              );
-            })}
-          </Sheet>
-        )}
 
         {exDetail && (
           <Sheet title={exDetail} onClose={() => setExDetail(null)}>
@@ -3703,13 +2588,7 @@ export default function Workhart() {
                 </div>
               </Card>
 
-              {!SERVER_MODE && (
-                <button onClick={exportData} style={{ ...btnG, width: "100%", marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                  <Download size={16} /> Export my data
-                </button>
-              )}
-              {SERVER_MODE && (
-                <div style={{ marginTop: 16 }}>
+              <div style={{ marginTop: 16 }}>
                   <Label>Fitness device</Label>
                   <select aria-label="Fitness device" value={device} onChange={(e) => changeDevice(e.target.value)} style={{ ...inp, color: device ? C.text : C.muted }}>
                     <option value="" disabled>Connect your fitness device…</option>
@@ -3717,7 +2596,6 @@ export default function Workhart() {
                   </select>
                   <button onClick={handleSignOut} style={{ ...btnG, width: "100%", marginTop: 4 }}>Sign out</button>
                 </div>
-              )}
             </div>
           </Sheet>
         )}
@@ -3730,7 +2608,7 @@ export default function Workhart() {
 const inp = {
   width: "100%", boxSizing: "border-box", background: C.surface, border: `1px solid ${C.line}`,
   borderRadius: 13, padding: "15px 16px", minHeight: 48, color: C.text, fontSize: 14, marginBottom: 12,
-  fontFamily: "'Space Grotesk', system-ui, sans-serif", outline: "none",
+  fontFamily: T.font.body, outline: "none",
 };
 const btnP = {
   background: `linear-gradient(135deg, ${C.energy}, ${C.energyDeep})`, color: C.inkOnEnergy, border: "none",
@@ -3743,7 +2621,7 @@ const btnG = {
 const ava = {
   width: 40, height: 40, borderRadius: "50%", background: C.surface2, border: `1px solid ${C.lineStrong}`,
   display: "flex", alignItems: "center", justifyContent: "center", color: C.energy, fontWeight: 700, fontSize: 16,
-  flexShrink: 0, fontFamily: "'Space Grotesk', sans-serif",
+  flexShrink: 0, fontFamily: T.font.body,
 };
 function Stat({ n, t, hot }) {
   return (

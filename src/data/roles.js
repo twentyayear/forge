@@ -1,0 +1,2 @@
+// THE DATABASE KEEPS admin/user (RENAMING THE CHECK TOUCHES FOUR MIGRATIONS); EVERY UI STRING SAYS TRAINER/CLIENT.
+export const ROLE_LABELS = { admin: "Trainer", user: "Client" };
