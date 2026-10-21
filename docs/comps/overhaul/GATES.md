@@ -72,3 +72,9 @@
 - Builder: build ok, 33/33 frontend, greps 0, detector `[]`, server 121/121. Fable re-run identical (detector also `[]` over `src/ui`).
 - Read: `voiceOn` boolean-only in the whitelist; the client tree no longer imports the legacy file.
 - Deviations accepted: food search normalised to the real `{results:[...]}` shape (the ask's `hits` was wrong); Toast repositioned (same clipping class as the install card); `Medal`/`InstallSheet` extracted; `DELETE /fuel-logs` is 200 not 204.
+- W.8 live walk as `hey+gl@`: Coach thread (real messages, Play), History (today's session, 3 sets, HARD), Offers empty state, Fuel (targets 2,500 / 170 g, quick-add chips), You (switches, device list, install, sign out). No overflow.
+
+## W.9 trainer core — GREEN (sonnet, first attempt)
+- Builder: build ok, 37/37 frontend, grep 0, detector `[]`, server 124/124. Fable re-run identical.
+- Read: `GET /admin/roster` joins every source through `users.trainer_id = $1`.
+- Deviations accepted: overview's real shape is `assignments` (ask said upcoming/past); program titles via the calendar; `forcedView` also takes `drafts`; builder gained an "Assign to" select in forced mode.

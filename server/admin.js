@@ -10,6 +10,7 @@ import { JOB_HANDLERS } from "./jobs.js";
 import { generateFromContext } from "./ai.js";
 import { issueMagicLink } from "./auth.js";
 import { rateLimit } from "express-rate-limit";
+import { sessionStreak } from "./streaks.js";
 
 // U8 (ask 34): the real deps for a manually-triggered job run -- same
 // generateFromContext the scheduler uses, so a manual run behaves identically
@@ -448,6 +449,111 @@ export function createAdminRouter(pool) {
     } catch (err) {
       if (isDbInputError(err)) return res.status(404).json({ error: "not_found" });
       console.error(`admin settings patch error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // ---- Roster (W.9) ----
+
+  // GET /admin/roster -- "needs you" first (missed in the last 7 days, unread
+  // client messages, pending drafts), then every client with next session and
+  // streak. Four queries, none per client; every one joins users.trainer_id.
+  router.get("/admin/roster", requireUser, requireAdmin, async (req, res) => {
+    const trainer = req.user.id;
+    try {
+      const [clientsResult, assignmentsResult, missedResult, unreadResult, draftsResult] = await Promise.all([
+        pool.query(
+          `SELECT u.id, u.name, u.email, to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today,
+                  to_char(lc.last_checkin, 'YYYY-MM-DD') AS last_checkin, ct.score AS readiness_today
+           FROM users u
+           LEFT JOIN LATERAL (SELECT MAX(c.day) AS last_checkin FROM checkins c WHERE c.user_id = u.id) lc ON true
+           LEFT JOIN LATERAL (SELECT c.score FROM checkins c WHERE c.user_id = u.id AND c.day = CURRENT_DATE LIMIT 1) ct ON true
+           WHERE u.role = 'user' AND u.trainer_id = $1
+           ORDER BY u.name ASC, u.created_at ASC`,
+          [trainer]
+        ),
+        pool.query(
+          `SELECT wa.user_id, to_char(wa.scheduled_for, 'YYYY-MM-DD') AS scheduled_for, wa.status,
+                  w.title AS workout_title, p.title AS program_title
+           FROM workout_assignments wa
+           JOIN users u ON u.id = wa.user_id AND u.trainer_id = $1
+           JOIN workouts w ON w.id = wa.workout_id
+           LEFT JOIN program_enrollments pe ON pe.id = wa.program_enrollment_id
+           LEFT JOIN programs p ON p.id = pe.program_id
+           WHERE wa.scheduled_for >= CURRENT_DATE - 400
+           ORDER BY wa.scheduled_for ASC`,
+          [trainer]
+        ),
+        pool.query(
+          `SELECT u.id AS user_id, u.name AS user_name,
+                  array_agg(to_char(wa.scheduled_for, 'YYYY-MM-DD') ORDER BY wa.scheduled_for) AS days
+           FROM workout_assignments wa
+           JOIN users u ON u.id = wa.user_id AND u.trainer_id = $1
+           WHERE wa.status = 'assigned' AND wa.scheduled_for < CURRENT_DATE AND wa.scheduled_for >= CURRENT_DATE - 7
+           GROUP BY u.id, u.name
+           ORDER BY u.name ASC`,
+          [trainer]
+        ),
+        pool.query(
+          `SELECT u.id AS user_id, u.name AS user_name, COUNT(*)::int AS count
+           FROM messages m
+           JOIN users u ON u.id = m.user_id AND u.trainer_id = $1
+           WHERE m.sender = 'user' AND m.read_at IS NULL
+           GROUP BY u.id, u.name
+           ORDER BY u.name ASC`,
+          [trainer]
+        ),
+        pool.query(
+          `SELECT COUNT(*)::int AS count
+           FROM ai_drafts d
+           JOIN users u ON u.id = d.user_id AND u.trainer_id = $1
+           WHERE d.status = 'pending'`,
+          [trainer]
+        ),
+      ]);
+
+      const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const dayName = (day) => WEEKDAY[new Date(`${day}T00:00:00Z`).getUTCDay()];
+      const missedBy = new Map(missedResult.rows.map((r) => [r.user_id, r.days]));
+
+      const needsYou = [
+        ...missedResult.rows.map((r) => ({
+          kind: "missed", user_id: r.user_id, user_name: r.user_name, count: r.days.length,
+          detail: r.days.map(dayName).join(" \u00b7 "),
+        })),
+        ...unreadResult.rows.map((r) => ({
+          kind: "unread", user_id: r.user_id, user_name: r.user_name, count: r.count, detail: "",
+        })),
+        ...(draftsResult.rows[0].count > 0
+          ? [{ kind: "drafts", count: draftsResult.rows[0].count, detail: "" }]
+          : []),
+      ];
+
+      const byClient = new Map();
+      for (const a of assignmentsResult.rows) {
+        const arr = byClient.get(a.user_id) ?? [];
+        arr.push(a);
+        byClient.set(a.user_id, arr);
+      }
+      const clients = clientsResult.rows.map((c) => {
+        const mine = byClient.get(c.id) ?? [];
+        const next = mine.find((a) => a.scheduled_for >= c.today && a.status === "assigned") ?? null;
+        return {
+          id: c.id,
+          name: c.name,
+          email: c.email,
+          last_checkin: c.last_checkin,
+          readiness_today: c.readiness_today ?? null,
+          next: next ? { scheduled_for: next.scheduled_for, title: next.workout_title } : null,
+          streak: sessionStreak(mine, c.today),
+          program_title: next ? next.program_title ?? null : null,
+          on_track: !missedBy.has(c.id),
+        };
+      });
+
+      res.status(200).json({ needsYou, clients });
+    } catch (err) {
+      console.error(`admin roster query error: ${err.message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });

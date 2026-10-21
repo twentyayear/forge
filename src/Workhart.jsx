@@ -258,7 +258,10 @@ function activeWorkoutFromAssignment(w) {
 
 // ---- App ----
 // SIGN-IN LIVES IN src/app/App.jsx; THIS COMPONENT STARTS FROM A SESSION AND HANDS 401s BACK THROUGH onSignedOut.
-export default function Workhart({ session, onSignedOut }) {
+// W.9: THE TRAINER SHELL RENDERS ONE CONSOLE AREA AT A TIME BY PASSING forcedView; THIS MAPS IT TO THE AREA'S FIRST SCREEN.
+const FORCED_START = { build: "builder", inbox: "inbox", drafts: "drafts", you: "you" };
+
+export default function Workhart({ session, onSignedOut, forcedView }) {
   const [screen, setScreen] = useState("boot");
   const [writeError, setWriteError] = useState("");
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
@@ -283,7 +286,7 @@ export default function Workhart({ session, onSignedOut }) {
     [todayAssignment]
   );
   // ---- Console (admin) ----
-  const [consoleScreen, setConsoleScreen] = useState("roster"); // "roster" | "dashboard" | "builder" | "inbox" | "thread" | "drafts" | "draftDetail"
+  const [consoleScreen, setConsoleScreen] = useState(FORCED_START[forcedView] || "roster"); // "roster" | "dashboard" | "builder" | "inbox" | "thread" | "drafts" | "draftDetail"
   const [roster, setRoster] = useState([]);
   const [rosterBusy, setRosterBusy] = useState(false);
   const [rosterError, setRosterError] = useState("");
@@ -404,7 +407,7 @@ export default function Workhart({ session, onSignedOut }) {
     if (data.user?.role === "admin") {
       // Kyle doesn't train here -- land in the console instead of the
       // athlete tabs; skip the survey entirely.
-      setConsoleScreen("roster");
+      setConsoleScreen(FORCED_START[forcedView] || "roster");
       setSelectedUserId(null);
       setOverview(null);
       setScreen("console");
@@ -518,7 +521,8 @@ export default function Workhart({ session, onSignedOut }) {
 
   // ---- Console (admin, server mode): data fetching ----
   useEffect(() => {
-    if (screen !== "console" || consoleScreen !== "roster") return;
+    // THE FORCED BUILD AREA NEEDS THE CLIENT LIST FOR ITS "ASSIGN TO" PICKER.
+    if (screen !== "console" || (consoleScreen !== "roster" && !(forcedView === "build" && consoleScreen === "builder"))) return;
     let cancelled = false;
     (async () => {
       setRosterBusy(true); setRosterError("");
@@ -760,7 +764,9 @@ export default function Workhart({ session, onSignedOut }) {
   }));
 
   const submitAssignment = async () => {
-    setBuilderError(""); setBuilderBusy(true);
+    setBuilderError("");
+    if (!selectedUserId) { setBuilderError("Pick a client first."); return; }
+    setBuilderBusy(true);
     try {
       let workoutId = builderExistingId;
       if (builderMode === "new") {
@@ -795,6 +801,11 @@ export default function Workhart({ session, onSignedOut }) {
       if (!aRes.ok) { setBuilderError("Couldn't create the assignment — try again."); setBuilderBusy(false); return; }
 
       setBuilderBusy(false);
+      if (forcedView) {
+        setBuilderTitle(""); setBuilderExercises([]); setBuilderExistingId(null);
+        setBuilderError("Assigned.");
+        return;
+      }
       const oRes = await api(`/api/admin/users/${selectedUserId}/overview`);
       if (oRes.ok) setOverview(oRes.data);
       setConsoleScreen("dashboard");
@@ -1105,6 +1116,7 @@ export default function Workhart({ session, onSignedOut }) {
       <div className="ff-b" style={{ minHeight: "100vh", background: C.bg, display: "flex", justifyContent: "center" }}>
         <style>{css}</style>
         <div style={{ width: "100%", maxWidth: 430, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+          {!forcedView && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
               <Mark height={30} />
@@ -1115,17 +1127,19 @@ export default function Workhart({ session, onSignedOut }) {
               Sign out
             </button>
           </div>
+          )}
 
           {writeError && (
             <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
           )}
 
-          {(consoleScreen === "roster" || consoleScreen === "inbox" || consoleScreen === "drafts") && (() => {
+          {(forcedView ? (forcedView === "inbox" || forcedView === "drafts") && (consoleScreen === "inbox" || consoleScreen === "drafts")
+            : (consoleScreen === "roster" || consoleScreen === "inbox" || consoleScreen === "drafts")) && (() => {
             const inboxUnread = inbox.reduce((s, r) => s + r.unread, 0);
             const draftsPending = drafts.length;
             return (
               <div style={{ display: "flex", gap: 8, padding: "14px 20px 0" }}>
-                {[["roster", "Roster"], ["inbox", "Inbox"], ["drafts", "Drafts"]].map(([key, label]) => {
+                {[["roster", "Roster"], ["inbox", "Inbox"], ["drafts", "Drafts"]].filter(([key]) => !forcedView || key !== "roster").map(([key, label]) => {
                   const sel = consoleScreen === key;
                   const badgeN = key === "inbox" ? inboxUnread : key === "drafts" ? draftsPending : 0;
                   return (
@@ -1150,6 +1164,15 @@ export default function Workhart({ session, onSignedOut }) {
           })()}
 
           <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 40px" }}>
+
+            {/* YOU (FORCED VIEW ONLY) */}
+            {consoleScreen === "you" && (
+              <div>
+                <h1 className="ff-d" style={{ fontSize: 36, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "18px 0 0", lineHeight: 1 }}>You</h1>
+                <div style={{ color: C.muted, fontSize: 13, margin: "6px 0 16px" }}>{session?.email}</div>
+                <button onClick={handleSignOut} style={{ ...btnG, width: "100%" }}>Sign out</button>
+              </div>
+            )}
 
             {/* ROSTER */}
             {consoleScreen === "roster" && (
@@ -1306,12 +1329,22 @@ export default function Workhart({ session, onSignedOut }) {
             {/* WORKOUT BUILDER */}
             {consoleScreen === "builder" && (
               <div>
-                <button onClick={backToDashboard}
-                  style={{ background: "none", border: "none", color: C.muted, fontSize: 13, padding: "8px 0", display: "flex", alignItems: "center", gap: 6 }}>
-                  <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Back to dashboard
-                </button>
+                {!forcedView && (
+                  <button onClick={backToDashboard}
+                    style={{ background: "none", border: "none", color: C.muted, fontSize: 13, padding: "8px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                    <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} /> Back to dashboard
+                  </button>
+                )}
                 <h1 className="ff-d" style={{ fontSize: 28, fontWeight: 700, color: C.text, textTransform: "uppercase", margin: "8px 0 0" }}>Assign a workout</h1>
-                <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{overview?.user?.name}</div>
+                {forcedView ? (
+                  <select aria-label="Assign to" value={selectedUserId || ""} onChange={(e) => setSelectedUserId(e.target.value || null)}
+                    style={{ ...inp, marginTop: 10, color: selectedUserId ? C.text : C.muted }}>
+                    <option value="">Pick a client…</option>
+                    {roster.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{overview?.user?.name}</div>
+                )}
 
                 <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                   {["new", "existing"].map((m) => {

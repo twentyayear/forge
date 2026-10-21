@@ -102,3 +102,4 @@ Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract,
 | W.6 | docs/asks/W6-foundation.md | Tokens, module split, ui primitives, app shell + login, PWA, prototype code removed. GREEN 2026-10-21, deployed. |
 | W.7 | docs/asks/W7-client-core.md | Client core: check-in, Today, Train, set-end moment, Finish; feel PATCH. GREEN 2026-10-21, deployed. |
 | W.8 | docs/asks/W8-client-rest.md | Coach (thread, History, Offers), Fuel, You; voiceOn in the profile. GREEN 2026-10-21, deployed. |
+| W.9 | docs/asks/W9-trainer-core.md | Trainer core: Roster with needs-you, Client page, Add client; roster route. GREEN 2026-10-21, deployed. |

@@ -83,6 +83,7 @@ const MATRIX = [
   { method: "POST", path: "/api/coach/line", access: "user" },
 
   { method: "GET", path: "/api/admin/users", access: "admin" },
+  { method: "GET", path: "/api/admin/roster", access: "admin" },
   { method: "GET", path: "/api/admin/users/:id/overview", access: "admin" },
   { method: "POST", path: "/api/admin/workouts", access: "admin" },
   { method: "GET", path: "/api/admin/workouts", access: "admin" },
@@ -187,8 +188,8 @@ test("inventory matches the matrix exactly", () => {
     { unlisted: [], missing: [] },
     `routes served but not in matrix: ${JSON.stringify(unlisted)}; matrix entries not served: ${JSON.stringify(missing)}`
   );
-  assert.equal(actual.length, 56);
-  assert.equal(MATRIX.length, 56);
+  assert.equal(actual.length, 57);
+  assert.equal(MATRIX.length, 57);
 });
 
 test("inventory catches drift", () => {

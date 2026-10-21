@@ -523,3 +523,88 @@ test("add client: a non-admin gets 404 and creates nothing", async () => {
   const { rows } = await pool.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
   assert.equal(rows.length, 0);
 });
+
+// ---- Roster (W.9) ----
+
+// DATES ARE OFFSETS FROM THE DATABASE'S CURRENT_DATE SO THE FIXTURES AGREE WITH THE ROUTE'S OWN CLOCK.
+async function dayOffset(n) {
+  const { rows } = await pool.query(`SELECT to_char(CURRENT_DATE + $1::int, 'YYYY-MM-DD') AS d`, [n]);
+  return rows[0].d;
+}
+
+async function assignAt(client, workoutId, trainerRow, offset, status) {
+  await pool.query(
+    `INSERT INTO workout_assignments (user_id, workout_id, scheduled_for, assigned_by, status)
+     VALUES ($1, $2, CURRENT_DATE + $3::int, $4, $5)`,
+    [client.id, workoutId, offset, trainerRow.id, status]
+  );
+}
+
+test("roster: a missed assignment, an unread message and a pending draft surface under needsYou", async () => {
+  const t = await makeTrainer(pool, "rosterT");
+  const missed = await makeClient(pool, t, "rosterMissed");
+  const track = await makeClient(pool, t, "rosterTrack");
+  const cookie = await signIn(t);
+  const wId = await makeWorkout(t, "Roster Lower");
+
+  await assignAt(missed, wId, t, -2, "assigned");
+  await assignAt(track, wId, t, -2, "completed");
+  await assignAt(track, wId, t, -1, "completed");
+  await assignAt(track, wId, t, 3, "assigned");
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'user', 'hi'), ($1, 'user', 'again')`, [track.id]);
+  await pool.query(`INSERT INTO ai_drafts (user_id, trigger_type, body) VALUES ($1, 'manual', 'a'), ($2, 'manual', 'b')`, [missed.id, track.id]);
+  await pool.query(`INSERT INTO checkins (user_id, day, score, answers) VALUES ($1, CURRENT_DATE, 71, '{}')`, [track.id]);
+
+  const r = await api("GET", "/api/admin/roster", cookie);
+  assert.equal(r.status, 200);
+  const wd = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${await dayOffset(-2)}T00:00:00Z`).getUTCDay()];
+  assert.deepEqual(r.json.needsYou, [
+    { kind: "missed", user_id: missed.id, user_name: "rosterMissed", count: 1, detail: wd },
+    { kind: "unread", user_id: track.id, user_name: "rosterTrack", count: 2, detail: "" },
+    { kind: "drafts", count: 2, detail: "" },
+  ]);
+
+  assert.equal(r.json.clients.length, 2);
+  const m = r.json.clients.find((c) => c.id === missed.id);
+  const k = r.json.clients.find((c) => c.id === track.id);
+  assert.equal(m.on_track, false);
+  assert.equal(m.next, null);
+  assert.equal(m.streak, 0);
+  assert.equal(k.on_track, true);
+  assert.equal(k.streak, 2);
+  assert.deepEqual(k.next, { scheduled_for: await dayOffset(3), title: "Roster Lower" });
+  assert.equal(k.readiness_today, 71);
+  assert.equal(k.last_checkin, await dayOffset(0));
+  assert.equal(k.program_title, null);
+  assert.deepEqual(r.json.clients.map((c) => c.name), ["rosterMissed", "rosterTrack"]);
+});
+
+test("roster: a missed day older than 7 days does not count; trainer B's roster is empty", async () => {
+  const t = await makeTrainer(pool, "rosterOld");
+  const c = await makeClient(pool, t, "rosterOldClient");
+  const wId = await makeWorkout(t, "Old one");
+  await assignAt(c, wId, t, -9, "assigned");
+  const cookie = await signIn(t);
+  const r = await api("GET", "/api/admin/roster", cookie);
+  assert.deepEqual(r.json.needsYou, []);
+  assert.equal(r.json.clients[0].on_track, true);
+
+  const b = await makeTrainer(pool, "rosterB");
+  const rb = await api("GET", "/api/admin/roster", await signIn(b));
+  assert.equal(rb.status, 200);
+  assert.deepEqual(rb.json, { needsYou: [], clients: [] });
+});
+
+test("roster: another trainer's unread messages and drafts never reach this trainer's needsYou", async () => {
+  const a = await makeTrainer(pool, "rosterLeakA");
+  const ca = await makeClient(pool, a, "rosterLeakClientA");
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'user', 'hello')`, [ca.id]);
+  await pool.query(`INSERT INTO ai_drafts (user_id, trigger_type, body) VALUES ($1, 'manual', 'x')`, [ca.id]);
+  const b = await makeTrainer(pool, "rosterLeakB");
+  const cb = await makeClient(pool, b, "rosterLeakClientB");
+  const rb = await api("GET", "/api/admin/roster", await signIn(b));
+  assert.deepEqual(rb.json.needsYou, []);
+  assert.deepEqual(rb.json.clients.map((c) => c.id), [cb.id]);
+  const ra = await api("GET", "/api/admin/roster", await signIn(a));
+  assert.deepEqual(ra.json.needsYou.map((e) => e.kind), ["unread", "drafts"]);
+});

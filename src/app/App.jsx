@@ -3,8 +3,8 @@ import { T } from "../theme.js";
 import { api } from "../lib/api.js";
 import { Mark, UiStyles } from "../ui/index.js";
 import { Login } from "./Login.jsx";
-import { LegacyShell } from "./LegacyShell.jsx";
 import { ClientShell } from "../client/ClientShell.jsx";
+import { TrainerShell } from "../trainer/TrainerShell.jsx";
 import { InstallPrompt } from "./InstallPrompt.jsx";
 
 // THE MAGIC-LINK VERIFIER REDIRECTS HERE WITH ?auth=expired; READ IT ONCE, THEN CLEAN THE URL SO A RELOAD DOESN'T REPEAT IT.
@@ -49,7 +49,7 @@ export default function App() {
       {auth.stage === "in" && (
         <>
           {auth.me.role === "admin"
-            ? <LegacyShell mode="trainer" session={auth.me} onSignedOut={signedOut} />
+            ? <TrainerShell key={auth.me.id} session={auth.me} onSignedOut={signedOut} />
             : <ClientShell key={auth.me.id} session={auth.me} onSignedOut={signedOut} />}
           <InstallPrompt />
         </>
