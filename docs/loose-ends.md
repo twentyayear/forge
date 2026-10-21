@@ -52,3 +52,6 @@ The old Progress CSV export left with the legacy file; History shows 30 days wit
 
 ## 17. Voice recipe helper duplication
 `speechify` and `SPOKEN_WORDS` live in `src/lib/speech.js` (client) while the server inserts the pauses; a word added to one list is not added to the other. Fine today; worth a single shared list if the list grows.
+
+## 18. Inbox thread rows were blank on first live view (fixed forward in the close commit)
+`src/trainer/Inbox.jsx` read the raw SQL column names; the route returns `{user, last_message, unread}`. Fixed. Lesson for asks: quote the route's response mapping, not its SELECT.

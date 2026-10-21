@@ -91,7 +91,7 @@ M4: **U10 GREEN 2026-10-15** (uncommitted). Run by the chief-of-staff skill with
 Next: U11 (ask 37).
 M4: **Resend blocker CLEARED** — the `mail.alphaecho.io` domain was actually verified in Resend on 2026-09-03 (DKIM/SPF/MX under the `.mail` subdomain at GoDaddy, all four records dig-verified from `ns35.domaincontrol.com` and a public resolver on 2026-09-10). `MAIL_FROM` flipped from the sandbox `onboarding@resend.dev` to `WORKHART <login@mail.alphaecho.io>` on the droplet (backup at `/etc/workhart/env.bak.20260910`), service restarted, and a real magic-link send to `hey@blueroutevineyard.com` was accepted by Resend (`resend send attempt ok`, no 403). NOTE for future units: the verified sender domain is the SUBDOMAIN `mail.alphaecho.io` — sending as `@alphaecho.io` will fail. The earlier U2 note about sandbox mode is superseded.
 
-## Next milestone: W — the overhaul (shaped 2026-10-21, not yet run)
+## Milestone W — the overhaul (COMPLETE 2026-10-21, deployed on alphaecho.io)
 Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract, acceptance) and `EXECUTE.md` (authority, gate, measured premises, ship step). Board: https://claude.ai/artifact/QoZ5XigBbk4hs4s35Ms5T7. Night one = lean core (tenancy, programs and bundles, coach lines, achievements, compose + email + offers, foundation + PWA, client app, trainer console). Night two = Stripe subscriptions, push, wearables, food photos, native shell. U11 (Sam's cutover) and U12 (test-data cleanup) remain open and are unaffected.
 
 | W.1 | docs/asks/W1-trainer-tenancy.md | Trainer tenancy: `users.trainer_id`, scoped console, add client by email. GREEN 2026-10-21, deployed. |
@@ -104,3 +104,6 @@ Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract,
 | W.8 | docs/asks/W8-client-rest.md | Coach (thread, History, Offers), Fuel, You; voiceOn in the profile. GREEN 2026-10-21, deployed. |
 | W.9 | docs/asks/W9-trainer-core.md | Trainer core: Roster with needs-you, Client page, Add client; roster route. GREEN 2026-10-21, deployed. |
 | W.10 | docs/asks/W10-trainer-rest.md | Trainer rest: Build, Programs, Inbox + Drafts, Compose, Offers, You; legacy file retired. GREEN 2026-10-21, deployed. |
+| W.11 | — | Round close: specs salvaged into CLAUDE.md, loose ends filed, EXECUTE/GATES deleted after salvage. DONE 2026-10-21. |
+
+Night two (not started; SPEC §1 deferred list, `docs/loose-ends.md` 5–9): Stripe subscriptions and the coaching gate, web push, wearables OAuth, food photos, one-time offer checkout, the native shell.

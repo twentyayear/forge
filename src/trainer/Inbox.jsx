@@ -15,18 +15,21 @@ function Threads({ inbox, onOpen }) {
       <LoadState res={inbox} what="the inbox" />
       {inbox.data && rows.length === 0 && <p style={{ ...muted, fontSize: T.type.body }}>No conversations yet. Messages from clients land here.</p>}
       {rows.map((r) => {
+        // THE INBOX ROUTE SHAPES EACH ROW AS {user:{id,name,email}, last_message:{sender,body,created_at}|null, unread}.
+        const user = r.user || {};
+        const last = r.last_message || null;
         const unread = Number(r.unread) || 0;
         return (
-          <button key={r.id} type="button" className="wh-btn" onClick={() => onOpen({ id: r.id, name: r.name })}
+          <button key={user.id} type="button" className="wh-btn" onClick={() => onOpen({ id: user.id, name: user.name })}
             style={{ ...cardButton, display: "flex", alignItems: "center", justifyContent: "space-between", gap: T.space[3], minHeight: 56, borderColor: unread ? T.color.energy : T.color.line }}>
             <span style={{ minWidth: 0, flex: 1 }}>
-              <span style={{ display: "block", fontWeight: 600, color: T.color.text }}>{r.name}</span>
+              <span style={{ display: "block", fontWeight: 600, color: T.color.text }}>{user.name}</span>
               <span style={{ ...muted, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.last_sender === "kyle" ? "You: " : ""}{r.last_body}
+                {last ? `${last.sender === "kyle" ? "You: " : ""}${last.body}` : "No messages yet"}
               </span>
             </span>
             <span style={{ display: "grid", gap: 4, justifyItems: "end", flexShrink: 0 }}>
-              <span style={muted}>{ageLabel(r.last_created_at)}</span>
+              <span style={muted}>{last ? ageLabel(last.created_at) : ""}</span>
               {unread > 0 && <Chip tone="energy">{unread}</Chip>}
             </span>
           </button>
