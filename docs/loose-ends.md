@@ -2,9 +2,6 @@
 
 The one list of everything unbuilt, undecided or unverified. One heading per item, numbered once, never renumbered; a closed item is deleted. **Decision needed** marks a judgement call for Sam. **[server]** / **[browser]** tag items that cannot be verified from the repo alone.
 
-## 1. The droplet's Anthropic key is invalid [server]
-Every Claude call from alphaecho.io answers `401 invalid x-api-key` (seen in the API journal during the overhaul run). Coach lines fall back to `server/coach-bank.js`, Kyle's drafts and compose return their failure states. Fix: a new key from the Anthropic console, verified against `/v1/models` with a curl that never echoes it, then installed in `/etc/workhart/env` over ssh from the clipboard and `systemctl restart workhart-api`. Cost: minutes. **Decision needed:** none; Sam's hands only.
-
 ## 2. Pending AI drafts backlog [server]
 The trainer roster shows 29 pending `ai_drafts` accumulated by the daily and weekly jobs while nobody reviewed them. Approve or reject them from Inbox → Drafts, or delete the stale ones by SQL. **Decision needed:** whether old drafts should expire automatically (a job rule) or stay until reviewed.
 
