@@ -96,3 +96,4 @@ Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract,
 
 | W.1 | docs/asks/W1-trainer-tenancy.md | Trainer tenancy: `users.trainer_id`, scoped console, add client by email. GREEN 2026-10-21, deployed. |
 | W.2 | docs/asks/W2-programs-bundles.md | Programs, days, enrolments → assignments; bulk assign; calendar. GREEN 2026-10-21, deployed. |
+| W.3 | docs/asks/W3-coach-lines.md | Coach lines: Claude-written Kyle line per exercise and finish, cached, bank fallback. GREEN 2026-10-21, deployed. |

@@ -11,6 +11,7 @@ import { createMediaRouter } from "./media.js";
 import { createAdminRouter } from "./admin.js";
 import { createMessagesRouter } from "./messages.js";
 import { createProgramsRouter } from "./programs.js";
+import { createCoachRouter } from "./coach.js";
 
 export function createApp(pool) {
   const app = express();
@@ -45,6 +46,7 @@ export function createApp(pool) {
   app.use("/api", createMediaRouter(pool));
   app.use("/api", createAdminRouter(pool));
   app.use("/api", createProgramsRouter(pool));
+  app.use("/api", createCoachRouter(pool));
   app.use("/api", createMessagesRouter(pool));
 
   return app;

@@ -33,3 +33,9 @@
 - Builder: 91/91 (the ask's "pass >= 95" was Fable's miscount: 83 + 8 new = 91). Fable re-run: migrate down/up clean; `# tests 91 # pass 91 # fail 0`; build passes.
 - Security read: every route checks `programs.trainer_id`, `workouts.created_by` or `users.trainer_id` against `req.user.id` before BEGIN; enrol and bulk use `ON CONFLICT DO NOTHING`; delete relies on the no-cascade FK (409).
 - Deviations accepted: non-uuid ids 404; PATCH description null clears; calendar 400 body `invalid_query`.
+- Ship: main `5ea92ad`; deploy OK; prod migration `1790200000000_programs` applied; programs 0; health `db:true`.
+
+## W.3 coach lines — GREEN (sonnet, first attempt)
+- Builder: 98/98. Fable re-run: migrate down/up clean; `# tests 98 # pass 98 # fail 0`; `media.js`/`media-lib.js` diff 0 lines; build passes.
+- Security read: assignment ownership by `(id, user_id)` before any read of sets; previous sets and check-in read by `user_id` only; log line carries user id, kind, source, never the text; `ON CONFLICT ... DO UPDATE SET text = coach_lines.text` keeps the first writer's line.
+- Deviations accepted: prompt composed by slicing `SYSTEM_PROMPT`; empty `sets` allowed for `exercise`.
