@@ -107,3 +107,5 @@ Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract,
 | W.11 | — | Round close: specs salvaged into CLAUDE.md, loose ends filed, EXECUTE/GATES deleted after salvage. DONE 2026-10-21. |
 
 Night two (not started; SPEC §1 deferred list, `docs/loose-ends.md` 5–9): Stripe subscriptions and the coaching gate, web push, wearables OAuth, food photos, one-time offer checkout, the native shell.
+
+Post-round 2026-10-21: exercise library 50 → 60 (videos verified), six starter programs (Foundations, Strength Block, Push Pull Legs, Conditioning and Core, Dumbbells Only, Athletic Power) seeded for Kyle on alphaecho.io.
