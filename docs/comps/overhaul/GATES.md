@@ -45,3 +45,9 @@
 - Builder: 108/108. Fable re-run: migrate down/up clean; `# tests 108 # pass 108 # fail 0`; build passes.
 - Read: both writes evaluate inside BEGIN/COMMIT with `today` from `CURRENT_DATE`; `user_achievements` PK is the idempotency; every rule guarded per kind.
 - Deviations accepted: `new_pr` one per log (first PR exercise in set order); blurbs keep `<exercise>`/`<program>` placeholders (the client fills them from `context`); extra `context(ctx)` per registry entry.
+- Ship: main `53b6c96`; deploy OK (verify now waits 3 s); prod migration `1790400000000_achievements` applied; `NRestarts=0`.
+
+## W.5 compose, email, offers — GREEN (sonnet, first attempt)
+- Builder: 119/119. Fable re-run: migrate down/up clean; `# tests 119 # pass 119 # fail 0`; `api.resend.com` only in `mail.js`; build passes.
+- Read: broadcast inserts in one transaction, emails after COMMIT, ledger insert-first with delete on failure; nudge job uses the ledger as its idempotency; offers scoped by `trainer_id`; client offer reads via the caller's `trainer_id`; HTML-escaped email body.
+- Deviations accepted: `runUnreadNudge` falls back to the real mailer when deps lack it; `skipped` counted by a second query; `kyleSubject` exported for the test.

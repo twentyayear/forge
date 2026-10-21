@@ -12,6 +12,8 @@ import { createAdminRouter } from "./admin.js";
 import { createMessagesRouter } from "./messages.js";
 import { createProgramsRouter } from "./programs.js";
 import { createCoachRouter } from "./coach.js";
+import { createComposeRouter } from "./compose.js";
+import { createOffersRouter } from "./offers.js";
 
 export function createApp(pool) {
   const app = express();
@@ -48,6 +50,8 @@ export function createApp(pool) {
   app.use("/api", createProgramsRouter(pool));
   app.use("/api", createCoachRouter(pool));
   app.use("/api", createMessagesRouter(pool));
+  app.use("/api", createComposeRouter(pool));
+  app.use("/api", createOffersRouter(pool));
 
   return app;
 }

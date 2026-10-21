@@ -98,3 +98,4 @@ Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract,
 | W.2 | docs/asks/W2-programs-bundles.md | Programs, days, enrolments → assignments; bulk assign; calendar. GREEN 2026-10-21, deployed. |
 | W.3 | docs/asks/W3-coach-lines.md | Coach lines: Claude-written Kyle line per exercise and finish, cached, bank fallback. GREEN 2026-10-21, deployed. |
 | W.4 | docs/asks/W4-achievements.md | Achievements registry, streaks, earned in-transaction, `feel`. GREEN 2026-10-21, deployed. |
+| W.5 | docs/asks/W5-compose-email-offers.md | AI compose, broadcast + email ledger, unread nudge job, offers and requests, history window. GREEN 2026-10-21, deployed. |

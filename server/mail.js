@@ -100,3 +100,102 @@ export async function sendMagicLink(email, url) {
     return { ok: false };
   }
 }
+
+// THE SUBJECT IS "Kyle: " PLUS THE FIRST 48 CHARACTERS OF THE BODY, COLLAPSED TO ONE LINE; EXPORTED SO TESTS CAN ASSERT THE RULE.
+export function kyleSubject(body) {
+  return "Kyle: " + String(body).replace(/\s+/g, " ").trim().slice(0, 48);
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function renderKyleHtml(body, appUrl) {
+  const paragraphs = body
+    .trim()
+    .split(/\n\s*\n/)
+    .map((p) => `<p style="margin:0 0 16px;color:#ffffff;font-size:16px;line-height:1.5;">${escapeHtml(p.trim()).replace(/\n/g, "<br />")}</p>`)
+    .join("\n");
+  const url = escapeHtml(appUrl);
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#000000;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#000000;padding:40px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="padding:8px 0 24px;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.08em;">
+                Kyle
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 0 16px;">
+                ${paragraphs}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 0 24px;">
+                <a href="${url}" style="display:inline-block;background:#29ABE2;color:#000000;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:6px;font-size:16px;">
+                  Open WORKHART
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 0 8px;color:#8a8a8a;font-size:12px;">
+                You get these because a message from Kyle waited in WORKHART. Turn them off in Settings.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+// SENDKYLEMESSAGE(EMAIL, { BODY, APPURL }) RETURNS { OK, ID }.
+// SAME PINNED RESEND URL AND FROM-ADDRESS AS SENDMAGICLINK; NEVER LOGS THE BODY, ONLY STATUS AND RESEND'S MESSAGE ON FAILURE.
+export async function sendKyleMessage(email, { body, appUrl }) {
+  if (process.env.NODE_ENV === "test") {
+    outbox.push({ email, kind: "message", body, appUrl });
+    return { ok: true, id: "test" };
+  }
+
+  const from = process.env.MAIL_FROM || "WORKHART <onboarding@resend.dev>";
+
+  try {
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from,
+        to: [email],
+        subject: kyleSubject(body),
+        html: renderKyleHtml(body, appUrl),
+        text: `${body}\n\nOpen WORKHART: ${appUrl}`,
+      }),
+    });
+
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const errBody = await res.json();
+        detail = errBody && errBody.message ? errBody.message : JSON.stringify(errBody);
+      } catch {
+        detail = await res.text().catch(() => "");
+      }
+      console.error(`resend send failed: status=${res.status} message=${detail}`);
+      return { ok: false, id: null };
+    }
+
+    const okBody = await res.json().catch(() => ({}));
+    return { ok: true, id: okBody && okBody.id ? okBody.id : null };
+  } catch (err) {
+    console.error(`resend send error: ${err.message}`);
+    return { ok: false, id: null };
+  }
+}

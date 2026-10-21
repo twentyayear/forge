@@ -105,6 +105,17 @@ const MATRIX = [
   { method: "POST", path: "/api/admin/programs/:id/enroll", access: "admin" },
   { method: "POST", path: "/api/admin/assignments/bulk", access: "admin" },
   { method: "GET", path: "/api/admin/calendar", access: "admin" },
+  { method: "POST", path: "/api/admin/compose", access: "admin" },
+  { method: "POST", path: "/api/admin/messages/broadcast", access: "admin" },
+  { method: "GET", path: "/api/admin/offers", access: "admin" },
+  { method: "POST", path: "/api/admin/offers", access: "admin" },
+  { method: "PATCH", path: "/api/admin/offers/:id", access: "admin" },
+  { method: "DELETE", path: "/api/admin/offers/:id", access: "admin" },
+  { method: "GET", path: "/api/admin/offer-requests", access: "admin" },
+  { method: "PATCH", path: "/api/admin/offer-requests/:id", access: "admin" },
+  { method: "GET", path: "/api/offers", access: "user" },
+  { method: "POST", path: "/api/offers/:id/request", access: "user" },
+  { method: "GET", path: "/api/history", access: "user" },
 ];
 
 // Walks the express 4 router stack: direct routes, then mounted routers
@@ -175,8 +186,8 @@ test("inventory matches the matrix exactly", () => {
     { unlisted: [], missing: [] },
     `routes served but not in matrix: ${JSON.stringify(unlisted)}; matrix entries not served: ${JSON.stringify(missing)}`
   );
-  assert.equal(actual.length, 44);
-  assert.equal(MATRIX.length, 44);
+  assert.equal(actual.length, 55);
+  assert.equal(MATRIX.length, 55);
 });
 
 test("inventory catches drift", () => {

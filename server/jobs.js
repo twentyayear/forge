@@ -11,7 +11,12 @@
 // CONFLICT DO NOTHING, rowCount 0 -> skip). Per-user work is wrapped in its
 // own try/catch so one athlete's failure never aborts the run for the rest.
 
+import { sendKyleMessage as defaultSendKyleMessage } from "./mail.js";
+
 const DAILY_MONITOR = "daily-monitor";
+const UNREAD_NUDGE = "unread-nudge";
+const UNREAD_NUDGE_AFTER_HOURS = 24;
+const UNREAD_NUDGE_BATCH = 200;
 const WEEKLY_SUMMARY = "weekly-summary";
 
 // A missed workout counts if the athlete's readiness mean has genuinely
@@ -260,8 +265,74 @@ export async function runWeeklySummary(pool, deps, { now = new Date() } = {}) {
   return summary;
 }
 
+// ---- UNREAD NUDGE (W.5) ----
+
+// RUNUNREADNUDGE(POOL, DEPS, {NOW}) RETURNS {CANDIDATES, SENT, FAILED, SKIPPED}.
+// THE message_emails LEDGER IS THE IDEMPOTENCY, SO THERE IS NO job_runs ROW.
+// deps.sendKyleMessage AND deps.appUrl FALL BACK TO mail.js AND APP_BASE_URL BECAUSE THE ADMIN MANUAL-TRIGGER ROUTE PASSES ITS OWN DEPS WITHOUT THEM.
+export async function runUnreadNudge(pool, deps = {}, { now = new Date() } = {}) {
+  const send = deps.sendKyleMessage || defaultSendKyleMessage;
+  const appUrl = deps.appUrl ?? process.env.APP_BASE_URL ?? "";
+  const cutoff = new Date(now.getTime() - UNREAD_NUDGE_AFTER_HOURS * 3600 * 1000);
+
+  const { rows: candidates } = await pool.query(
+    `SELECT m.id, m.body, u.email
+     FROM messages m JOIN users u ON u.id = m.user_id
+     WHERE m.sender = 'kyle' AND m.read_at IS NULL AND m.created_at < $1
+       AND u.profile->>'emailMessages' IS DISTINCT FROM 'false'
+       AND NOT EXISTS (SELECT 1 FROM message_emails me WHERE me.message_id = m.id)
+     ORDER BY m.created_at ASC LIMIT $2`,
+    [cutoff, UNREAD_NUDGE_BATCH]
+  );
+  // MESSAGES THAT QUALIFY BY AGE AND PREFERENCE BUT ALREADY HAVE A LEDGER ROW ARE REPORTED AS SKIPPED.
+  const { rows: ledgered } = await pool.query(
+    `SELECT COUNT(*)::int AS n
+     FROM messages m JOIN users u ON u.id = m.user_id
+     WHERE m.sender = 'kyle' AND m.read_at IS NULL AND m.created_at < $1
+       AND u.profile->>'emailMessages' IS DISTINCT FROM 'false'
+       AND EXISTS (SELECT 1 FROM message_emails me WHERE me.message_id = m.id)`,
+    [cutoff]
+  );
+
+  const summary = { candidates: candidates.length, sent: 0, failed: 0, skipped: ledgered[0].n };
+  for (const m of candidates) {
+    try {
+      const claim = await pool.query(
+        `INSERT INTO message_emails (message_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING message_id`,
+        [m.id]
+      );
+      if (claim.rowCount === 0) {
+        summary.skipped++;
+        continue;
+      }
+      let result;
+      try {
+        result = await send(m.email, { body: m.body, appUrl });
+      } catch {
+        result = { ok: false };
+      }
+      if (result?.ok) {
+        await pool.query(`UPDATE message_emails SET resend_id = $2 WHERE message_id = $1`, [m.id, result.id ?? null]);
+        summary.sent++;
+      } else {
+        await pool.query(`DELETE FROM message_emails WHERE message_id = $1`, [m.id]);
+        summary.failed++;
+      }
+    } catch (err) {
+      console.error(`${UNREAD_NUDGE}: message ${m.id} failed: ${err.message}`);
+      summary.failed++;
+    }
+  }
+
+  console.log(
+    `job ${UNREAD_NUDGE} ok: candidates=${summary.candidates} sent=${summary.sent} failed=${summary.failed} skipped=${summary.skipped}`
+  );
+  return summary;
+}
+
 // name -> handler, shared by the admin manual-trigger route and scheduler.js.
 export const JOB_HANDLERS = {
   [DAILY_MONITOR]: runDailyMonitor,
   [WEEKLY_SUMMARY]: runWeeklySummary,
+  [UNREAD_NUDGE]: runUnreadNudge,
 };

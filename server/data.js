@@ -11,7 +11,10 @@ import { sessionStreak, checkinStreak } from "./streaks.js";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FEELS = ["easy", "right", "hard"];
-const PROFILE_WHITELIST = ["bodyweight", "fuelTargets", "coach", "device"];
+const PROFILE_WHITELIST = ["bodyweight", "fuelTargets", "coach", "device", "emailMessages"];
+
+// THE CLIENT HISTORY WINDOW IN DAYS; A FUTURE PAID TIER RAISES THIS, SO IT IS ONE NAMED CONSTANT.
+export const HISTORY_DAYS_FREE = 30;
 
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -36,6 +39,7 @@ function whitelistedProfileFields(body) {
   const out = {};
   for (const key of Object.keys(body ?? {})) {
     if (!PROFILE_WHITELIST.includes(key)) return null; // unknown key -> caller rejects
+    if (key === "emailMessages" && typeof body[key] !== "boolean") return null;
     out[key] = body[key];
   }
   return out;
@@ -353,6 +357,59 @@ export function createDataRouter(pool) {
       res.status(200).json(rows[0].profile);
     } catch (err) {
       console.error(`profile patch error: ${err.message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // HISTORY RETURNS ONLY THE CALLER'S OWN LOGS INSIDE THE WINDOW, NEWEST FIRST.
+  router.get("/history", requireUser, async (req, res) => {
+    let days = HISTORY_DAYS_FREE;
+    if (req.query.days !== undefined) {
+      const raw = req.query.days;
+      if (typeof raw !== "string" || !/^\d+$/.test(raw)) return res.status(400).json({ error: "invalid_days" });
+      days = Number(raw);
+      if (days < 1 || days > HISTORY_DAYS_FREE) return res.status(400).json({ error: "invalid_days" });
+    }
+
+    try {
+      const { rows: logs } = await pool.query(
+        `SELECT wl.id, wl.performed_at, wl.notes, wl.feel, wl.assignment_id, w.title AS workout_title
+         FROM workout_logs wl
+         LEFT JOIN workout_assignments wa ON wa.id = wl.assignment_id AND wa.user_id = wl.user_id
+         LEFT JOIN workouts w ON w.id = wa.workout_id
+         WHERE wl.user_id = $1 AND wl.performed_at >= now() - make_interval(days => $2::int)
+         ORDER BY wl.performed_at DESC`,
+        [req.user.id, days]
+      );
+      const ids = logs.map((l) => l.id);
+      const { rows: sets } = ids.length
+        ? await pool.query(
+            `SELECT log_id, exercise_key, set_no, reps, weight_lbs, rpe
+             FROM workout_log_sets WHERE user_id = $1 AND log_id = ANY($2::uuid[])
+             ORDER BY exercise_key, set_no`,
+            [req.user.id, ids]
+          )
+        : { rows: [] };
+      const byLog = new Map();
+      for (const s of sets) {
+        const arr = byLog.get(s.log_id) ?? [];
+        arr.push({ exercise_key: s.exercise_key, set_no: s.set_no, reps: s.reps, weight_lbs: s.weight_lbs, rpe: s.rpe });
+        byLog.set(s.log_id, arr);
+      }
+      res.status(200).json({
+        days,
+        logs: logs.map((l) => ({
+          id: l.id,
+          performed_at: l.performed_at,
+          notes: l.notes,
+          feel: l.feel,
+          assignment_id: l.assignment_id,
+          workout_title: l.workout_title ?? null,
+          sets: byLog.get(l.id) ?? [],
+        })),
+      });
+    } catch (err) {
+      console.error(`history query error: ${err.message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });

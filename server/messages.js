@@ -15,7 +15,7 @@ function isDbInputError(err) {
   return typeof err?.code === "string" && (err.code.startsWith("22") || err.code.startsWith("23"));
 }
 
-function validBody(raw) {
+export function validBody(raw) {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (!trimmed || trimmed.length > MAX_BODY_LEN) return null;

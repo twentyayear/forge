@@ -3,10 +3,11 @@
 // NODE_ENV !== "test" -- app.js (imported by every test file) never touches
 // this module, so the test suite never boots pg-boss.
 import { PgBoss } from "pg-boss";
-import { runDailyMonitor, runWeeklySummary } from "./jobs.js";
+import { runDailyMonitor, runWeeklySummary, runUnreadNudge } from "./jobs.js";
 import { generateFromContext } from "./ai.js";
+import { sendKyleMessage } from "./mail.js";
 
-const DEPS = { generateFromContext };
+const DEPS = { generateFromContext, sendKyleMessage, appUrl: process.env.APP_BASE_URL || "" };
 
 // Droplet is UTC; Sam is ET. 13:00/13:30 UTC is 9:00/9:30am ET during EDT
 // (UTC-4) and 8:00/8:30am ET during EST (UTC-5) -- the DST drift is accepted,
@@ -14,6 +15,7 @@ const DEPS = { generateFromContext };
 const JOBS = [
   { name: "daily-monitor", cron: "0 13 * * *", run: runDailyMonitor },
   { name: "weekly-summary", cron: "30 13 * * 1", run: runWeeklySummary },
+  { name: "unread-nudge", cron: "15 * * * *", run: runUnreadNudge },
 ];
 
 // startScheduler(pool) -> the PgBoss instance, or null if it couldn't start.
@@ -41,7 +43,8 @@ export async function startScheduler(pool) {
         try {
           const summary = await job.run(pool, DEPS, { now: new Date() });
           const ms = Date.now() - start;
-          console.log(
+          // THE UNREAD NUDGE LOGS ITS OWN SUMMARY LINE AND HAS NO users FIELD.
+          if (summary.users !== undefined) console.log(
             `job ${job.name} ok: users=${summary.users} acted=${summary.acted} skipped=${summary.skipped} errors=${summary.errors} (${ms}ms)`
           );
         } catch (err) {
