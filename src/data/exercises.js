@@ -153,6 +153,37 @@ export const EX_LIB = [
   { name: "Chest-Supported Row", equipment: "Machine", muscles: "Back · Biceps", base: 90, video: "0UBRfiO4zDs",
     blurb: "The chest pad removes any momentum from the low back — pure, strict back tension.",
     cues: ["Chest pinned to the pad the whole set", "Pull elbows back, squeeze the shoulder blades", "Control the weight back to a full stretch"] },
+  // ---- Added in the overhaul round (2026-10): ten more, every video verified through YouTube oEmbed ----
+  { name: "Trap Bar Deadlift", equipment: "Barbell", muscles: "Glutes · Hamstrings · Quads · Back", base: 185, video: "TU2xZ7s4jus",
+    blurb: "The friendliest heavy pull: neutral grip, the load around you instead of in front, so the back stays tall. Build it before the straight bar.",
+    cues: ["Stand in the middle, shins close, hands centred on the handles", "Push the floor away — hips and chest rise together", "Lock out tall, then sit the hips back to lower"] },
+  { name: "Chin-Up", equipment: "Bodyweight", muscles: "Back · Biceps", base: 0, video: "mRy9m2Q9_1I",
+    blurb: "Palms toward you, a little narrower than a pull-up, so the biceps help. Dead hang to chin over the bar, every rep.",
+    cues: ["Start from a full hang with the shoulders packed", "Drive the elbows down to the ribs", "No kipping — control the way down"] },
+  { name: "Inverted Row", equipment: "Bodyweight", muscles: "Back · Biceps · Core", base: 0, video: "hXTc1mDnZCw",
+    blurb: "A row you can scale with foot position. The bridge to your first pull-up and a back builder in its own right.",
+    cues: ["Body one straight line, glutes tight", "Pull the chest to the bar, elbows close", "Pause at the top, then lower under control"] },
+  { name: "Dumbbell Step-Up", equipment: "Dumbbell", muscles: "Quads · Glutes", base: 25, video: "7AtIjR-QqVA",
+    blurb: "One leg at a time, no momentum. Builds the quad and glute strength that carries over to stairs, hills and the squat.",
+    cues: ["Whole foot on the box, knee over the mid-foot", "Drive through the top foot — don't push off the floor leg", "Lower slowly, touch and go"] },
+  { name: "Reverse Lunge", equipment: "Dumbbell", muscles: "Glutes · Quads · Hamstrings", base: 25, video: "sjlsISvHyZs",
+    blurb: "Easier on the knees than a forward lunge and better for the glutes. Step back, sink, drive through the front heel.",
+    cues: ["Chest up, step straight back", "Both knees to about ninety degrees, back knee hovers", "Push through the front heel to stand"] },
+  { name: "Single-Leg RDL", equipment: "Dumbbell", muscles: "Hamstrings · Glutes · Balance", base: 25, video: "cpANuRYEMyA",
+    blurb: "A hinge on one leg. Builds the hamstrings and the balance that keeps hips and knees healthy.",
+    cues: ["Soft knee on the standing leg, never locked", "Hinge from the hip, back flat, hips level", "Lower to about knee height, then squeeze the glute to stand"] },
+  { name: "Pallof Press", equipment: "Cable", muscles: "Core · Obliques", base: 20, video: "n8ZZG9gElhs",
+    blurb: "An anti-rotation press: the cable tries to twist you and you refuse. The core work that protects the spine under load.",
+    cues: ["Stand sideways to the stack, feet shoulder width", "Press straight out and hold — hips and shoulders square", "Light weight, slow reps; too heavy defeats the point"] },
+  { name: "Dead Bug", equipment: "Bodyweight", muscles: "Core · Hip Flexors", base: 0, video: "GbSC02oU3To",
+    blurb: "Opposite arm and leg reach from your back while the trunk stays still. The beginner's core move that experts keep doing.",
+    cues: ["Arms up, knees over hips to start", "Reach one arm and the opposite leg away, slow", "Ribs down the whole time — no arching"] },
+  { name: "Burpee", equipment: "Bodyweight", muscles: "Full Body · Conditioning", base: 0, video: "G2hv_NYhM-A",
+    blurb: "Squat, plank, push-up, jump. The conditioning finisher that needs no equipment and spares nobody.",
+    cues: ["Hands down, jump the feet back to a tight plank", "Chest to the floor, then back to the squat", "Stand tall and jump — land soft"] },
+  { name: "Dumbbell Thruster", equipment: "Dumbbell", muscles: "Quads · Shoulders · Full Body", base: 20, video: "1KYPZ-Jzo3w",
+    blurb: "A front squat that flows into a press. Legs, shoulders and lungs in one move; start light, the weight goes overhead.",
+    cues: ["Dumbbells at the shoulders, elbows forward", "Squat to depth, chest up", "Drive up and press in one motion, lock out overhead"] },
 ];
 export const VIDEO_IDS = Object.fromEntries(EX_LIB.map((e) => [e.name, e.video]));
 export const EX_INFO = Object.fromEntries(EX_LIB.map((e) => [e.name, e]));
@@ -160,4 +191,5 @@ export const EX_BASE = Object.fromEntries(EX_LIB.map((e) => [e.name, e.base]));
 
 // EXERCISE_KEY IS THE EX_LIB NAME; A KEY WITH NO MATCH STILL RENDERS WITH THIS CUE.
 export const FALLBACK_CUE = "Stay tight and control the tempo.";
-export const BLOCK_TYPES = ["Strength / Power", "Strength / Power", "Hypertrophy", "Hypertrophy", "Accessory", "Finisher"];
+export const BLOCK_TYPES = ["Strength / Power", "Strength / Power", "Hypertrophy", "Hypertrophy", "Accessory", "Finisher"
+];
