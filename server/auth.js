@@ -21,6 +21,21 @@ function genRawToken() {
 // timing doesn't reveal whether an account exists.
 const DUMMY_HASH = await hashPassword(genRawToken());
 
+// MINTS A MAGIC-LINK TOKEN FOR THE USER AND MAILS IT. SHARED BY REQUEST-LINK AND THE TRAINER'S ADD-CLIENT ROUTE SO BOTH ISSUE IDENTICAL LINKS.
+export async function issueMagicLink(pool, user) {
+  const raw = genRawToken();
+  const tokenHash = hashToken(raw);
+  const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_MS);
+  await pool.query(`INSERT INTO magic_link_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`, [
+    user.id,
+    tokenHash,
+    expiresAt,
+  ]);
+  const base = process.env.APP_BASE_URL || "";
+  const url = `${base}/api/auth/verify?token=${raw}`;
+  await sendMagicLink(user.email, url);
+}
+
 export function createAuthRouter(pool) {
   const router = Router();
   const requireUser = makeRequireUser(pool);
@@ -127,16 +142,7 @@ export function createAuthRouter(pool) {
         const { rows } = await pool.query(`SELECT id FROM users WHERE email = $1`, [email]);
         const user = rows[0];
         if (user) {
-          const raw = genRawToken();
-          const tokenHash = hashToken(raw);
-          const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_MS);
-          await pool.query(
-            `INSERT INTO magic_link_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
-            [user.id, tokenHash, expiresAt]
-          );
-          const base = process.env.APP_BASE_URL || "";
-          const url = `${base}/api/auth/verify?token=${raw}`;
-          await sendMagicLink(email, url);
+          await issueMagicLink(pool, { id: user.id, email });
         }
       } catch (err) {
         console.error(`request-link error: ${err.message}`);

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient, signIn as signInWith, authHeaders } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -30,6 +31,15 @@ const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 
 const { createApp } = await import("../app.js");
 
+const signIn = (user) => signInWith(pool, user);
+
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER, AND MOST TESTS DO NOT CARE WHICH.
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 const app = createApp(pool);
 const server = http.createServer(app);
 
@@ -45,36 +55,6 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
 });
-
-function uniqueEmail(label) {
-  return `${label}.${process.hrtime.bigint()}@idor-test.local`;
-}
-
-function sha256(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
-
-async function makeUser(role, label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id, email`,
-    [email, label, role]
-  );
-  return rows[0];
-}
-
-async function signIn(user) {
-  const raw = crypto.randomBytes(32).toString("base64url");
-  await pool.query(
-    `INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`,
-    [user.id, sha256(raw)]
-  );
-  return raw;
-}
-
-function authHeaders(cookie) {
-  return { cookie: `wh_session=${cookie}` };
-}
 
 // ---- Route matrix + inventory ----
 
@@ -105,6 +85,7 @@ const MATRIX = [
   { method: "POST", path: "/api/admin/workouts", access: "admin" },
   { method: "GET", path: "/api/admin/workouts", access: "admin" },
   { method: "POST", path: "/api/admin/assignments", access: "admin" },
+  { method: "POST", path: "/api/admin/clients", access: "admin" },
   { method: "PATCH", path: "/api/admin/assignments/:id", access: "admin" },
   { method: "GET", path: "/api/admin/drafts", access: "admin" },
   { method: "PATCH", path: "/api/admin/drafts/:id", access: "admin" },
@@ -185,8 +166,8 @@ test("inventory matches the matrix exactly", () => {
     { unlisted: [], missing: [] },
     `routes served but not in matrix: ${JSON.stringify(unlisted)}; matrix entries not served: ${JSON.stringify(missing)}`
   );
-  assert.equal(actual.length, 34);
-  assert.equal(MATRIX.length, 34);
+  assert.equal(actual.length, 35);
+  assert.equal(MATRIX.length, 35);
 });
 
 test("inventory catches drift", () => {
@@ -213,7 +194,7 @@ test("unauthenticated sweep", async () => {
 });
 
 test("non-admin sweep", async () => {
-  const u = await makeUser("user", "plainuser");
+  const u = await makeClient(pool, trainer, "plainuser");
   const cookie = await signIn(u);
 
   const snapshot = async () => ({
@@ -237,7 +218,7 @@ test("non-admin sweep", async () => {
 });
 
 async function seedUser(label, admin) {
-  const user = await makeUser("user", label);
+  const user = await makeClient(pool, admin, label);
   const ids = { user: user.id };
   ids.checkin = (
     await q(
@@ -283,7 +264,7 @@ async function seedUser(label, admin) {
 }
 
 async function setupAB() {
-  const admin = await makeUser("admin", "idoradmin");
+  const admin = await makeTrainer(pool, "idoradmin");
   const A = await seedUser("userA", admin);
   const B = await seedUser("userB", admin);
   const cookieA = await signIn(A.user);

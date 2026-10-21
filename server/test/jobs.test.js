@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient, signIn as signInWith, authHeaders } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -38,6 +39,15 @@ const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 const { createApp } = await import("../app.js");
 const { runDailyMonitor, runWeeklySummary, isoWeekInfo, isoWeekKey } = await import("../jobs.js");
 
+const signIn = (user) => signInWith(pool, user);
+
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER, AND MOST TESTS DO NOT CARE WHICH.
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 const app = createApp(pool);
 const server = http.createServer(app);
 
@@ -59,36 +69,6 @@ after(async () => {
 // these tests' findings -- not that they could anyway, since every query in
 // jobs.js is user_id-scoped; this just keeps things easy to reason about.
 const NOW = new Date("2026-02-10T12:00:00.000Z");
-
-function uniqueEmail(label) {
-  return `${label}.${process.hrtime.bigint()}@jobs-test.local`;
-}
-
-function sha256(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
-
-async function makeUser(role, label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id, email`,
-    [email, label, role]
-  );
-  return rows[0];
-}
-
-async function signIn(user) {
-  const raw = crypto.randomBytes(32).toString("base64url");
-  await pool.query(
-    `INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`,
-    [user.id, sha256(raw)]
-  );
-  return raw;
-}
-
-function authHeaders(cookie) {
-  return { cookie: `wh_session=${cookie}` };
-}
 
 async function makeWorkout(creatorId, title) {
   const { rows } = await pool.query(`INSERT INTO workouts (created_by, title) VALUES ($1, $2) RETURNING id`, [
@@ -218,7 +198,7 @@ test("isoWeekKey is correct across a year boundary", () => {
 // ---- 2. Daily monitor: seeded missed assignment -> one draft; double-run idempotent ----
 
 test("daily monitor: missed assignment produces one pending draft quoting it; a second run is a no-op", async () => {
-  const user = await makeUser("user", "missedWorkout");
+  const user = await makeClient(pool, trainer, "missedWorkout");
   const workoutId = await makeWorkout(user.id, "Leg Day");
   const yesterday = "2026-02-09"; // NOW - 1 day, within the 7-day lookback
   await assignWorkout(user.id, workoutId, yesterday, "assigned");
@@ -247,7 +227,7 @@ test("daily monitor: missed assignment produces one pending draft quoting it; a 
 // ---- 3. Readiness slump detected; steady scores -> no finding, no message (also covers #4) ----
 
 test("daily monitor: readiness slump is detected; a steady-scoring athlete gets no finding and no message (job_runs still written)", async () => {
-  const slumpUser = await makeUser("user", "slumpAthlete");
+  const slumpUser = await makeClient(pool, trainer, "slumpAthlete");
   // Prior 7 days: healthy ~80s. Last 3: dropped hard to ~40s (>=15 below prior, and below the 50 floor).
   const priorDays = ["2026-01-30", "2026-01-31", "2026-02-01", "2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05"];
   for (const d of priorDays) await seedCheckin(slumpUser.id, d, 80);
@@ -255,7 +235,7 @@ test("daily monitor: readiness slump is detected; a steady-scoring athlete gets 
   await seedCheckin(slumpUser.id, "2026-02-08", 38);
   await seedCheckin(slumpUser.id, "2026-02-09", 40);
 
-  const steadyUser = await makeUser("user", "steadyAthlete");
+  const steadyUser = await makeClient(pool, trainer, "steadyAthlete");
   const steadyDays = ["2026-02-04", "2026-02-05", "2026-02-06", "2026-02-07", "2026-02-08", "2026-02-09"];
   for (const d of steadyDays) await seedCheckin(steadyUser.id, d, 72);
 
@@ -278,7 +258,7 @@ test("daily monitor: readiness slump is detected; a steady-scoring athlete gets 
 // ---- 5. Weekly summary: active athlete gets a recap; zero-activity athlete is skipped (also covers #6 double-run) ----
 
 test("weekly summary: active athlete gets a recap draft citing real counts; zero-activity athlete is skipped; a second run in the same ISO week is a no-op", async () => {
-  const activeUser = await makeUser("user", "weeklyActive");
+  const activeUser = await makeClient(pool, trainer, "weeklyActive");
   await seedCheckin(activeUser.id, "2026-02-05", 70);
   await seedCheckin(activeUser.id, "2026-02-07", 80);
   await seedWorkoutLog(activeUser.id, "2026-02-06T12:00:00Z", [
@@ -287,7 +267,7 @@ test("weekly summary: active athlete gets a recap draft citing real counts; zero
   ]);
   await seedFuelLog(activeUser.id, "2026-02-06");
 
-  const idleUser = await makeUser("user", "weeklyIdle");
+  const idleUser = await makeClient(pool, trainer, "weeklyIdle");
 
   const { deps } = makeFakeDeps();
   const first = await runWeeklySummary(pool, deps, { now: NOW });
@@ -316,8 +296,8 @@ test("weekly summary: active athlete gets a recap draft citing real counts; zero
 // ---- 7. One athlete's generator throwing doesn't abort the others ----
 
 test("daily monitor: one athlete's generateFromContext throwing still lets the others get processed, and counts as an error", async () => {
-  const poisonUser = await makeUser("user", "poisonAthlete");
-  const goodUser = await makeUser("user", "goodAthlete");
+  const poisonUser = await makeClient(pool, trainer, "poisonAthlete");
+  const goodUser = await makeClient(pool, trainer, "goodAthlete");
   const workoutId = await makeWorkout(goodUser.id, "Poison-test workout");
   await assignWorkout(poisonUser.id, workoutId, "2026-02-09", "assigned");
   await assignWorkout(goodUser.id, workoutId, "2026-02-09", "assigned");
@@ -342,9 +322,9 @@ test("daily monitor: one athlete's generateFromContext throwing still lets the o
 // ---- 8. Admin route wiring ----
 
 test("admin jobs route: 401 no session, 404 non-admin, 404 unknown job name, 200 + summary as admin", async () => {
-  const normal = await makeUser("user", "jobsRouteNormal");
+  const admin = await makeTrainer(pool, "jobsRouteAdmin");
+  const normal = await makeClient(pool, admin, "jobsRouteNormal");
   const normalCookie = await signIn(normal);
-  const admin = await makeUser("admin", "jobsRouteAdmin");
   const adminCookie = await signIn(admin);
 
   const noAuth = await fetch(`${baseUrl}/api/admin/jobs/daily-monitor/run`, { method: "POST" });

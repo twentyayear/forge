@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient, signIn as signInWith, authHeaders } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -29,6 +30,15 @@ const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 
 const { createApp } = await import("../app.js");
 
+const signIn = (user) => signInWith(pool, user);
+
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER, AND MOST TESTS DO NOT CARE WHICH.
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 const app = createApp(pool);
 const server = http.createServer(app);
 
@@ -44,36 +54,6 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
 });
-
-function uniqueEmail(label) {
-  return `${label}.${process.hrtime.bigint()}@messages-test.local`;
-}
-
-function sha256(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
-
-async function makeUser(role, label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id, email`,
-    [email, label, role]
-  );
-  return rows[0];
-}
-
-async function signIn(user) {
-  const raw = crypto.randomBytes(32).toString("base64url");
-  await pool.query(
-    `INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`,
-    [user.id, sha256(raw)]
-  );
-  return raw;
-}
-
-function authHeaders(cookie) {
-  return { cookie: `wh_session=${cookie}` };
-}
 
 async function insertMessage(user, sender, body, readAt = null) {
   const { rows } = await pool.query(
@@ -101,7 +81,7 @@ async function makeAssignment(user, workoutId, admin, scheduledFor) {
 }
 
 test("route sweep: 401 with no session; admin routes 404 for a non-admin session", async () => {
-  const normal = await makeUser("user", "sweepNormal");
+  const normal = await makeClient(pool, trainer, "sweepNormal");
   const normalCookie = await signIn(normal);
 
   const calls = [
@@ -133,7 +113,7 @@ test("route sweep: 401 with no session; admin routes 404 for a non-admin session
 });
 
 test("athlete POST + GET round-trip; body validation rejects empty and >2000 chars", async () => {
-  const user = await makeUser("user", "roundtrip");
+  const user = await makeClient(pool, trainer, "roundtrip");
   const cookie = await signIn(user);
 
   const post = await fetch(`${baseUrl}/api/messages`, {
@@ -176,8 +156,8 @@ test("athlete POST + GET round-trip; body validation rejects empty and >2000 cha
 });
 
 test("athlete A cannot see athlete B's thread", async () => {
-  const userA = await makeUser("user", "scopeA");
-  const userB = await makeUser("user", "scopeB");
+  const userA = await makeClient(pool, trainer, "scopeA");
+  const userB = await makeClient(pool, trainer, "scopeB");
   await insertMessage(userA, "kyle", "Message for A");
   await insertMessage(userB, "kyle", "Message for B");
 
@@ -190,8 +170,8 @@ test("athlete A cannot see athlete B's thread", async () => {
 });
 
 test("read semantics: athlete POST /read marks exactly kyle-sent unread; admin GET thread marks exactly user-sent unread", async () => {
-  const admin = await makeUser("admin", "readAdmin");
-  const athlete = await makeUser("user", "readAthlete");
+  const admin = await makeTrainer(pool, "readAdmin");
+  const athlete = await makeClient(pool, admin, "readAthlete");
 
   await insertMessage(athlete, "kyle", "Kyle msg 1");
   await insertMessage(athlete, "kyle", "Kyle msg 2");
@@ -244,7 +224,7 @@ test("read semantics: athlete POST /read marks exactly kyle-sent unread; admin G
 });
 
 test("admin thread GET/POST 404 on unknown user id", async () => {
-  const admin = await makeUser("admin", "unknownAdmin");
+  const admin = await makeTrainer(pool, "unknownAdmin");
   const cookie = await signIn(admin);
   const unknownId = "00000000-0000-0000-0000-000000000000";
 
@@ -262,8 +242,8 @@ test("admin thread GET/POST 404 on unknown user id", async () => {
 });
 
 test("admin POST reply: happy path shows up in the athlete's own GET", async () => {
-  const admin = await makeUser("admin", "replyAdmin");
-  const athlete = await makeUser("user", "replyAthlete");
+  const admin = await makeTrainer(pool, "replyAdmin");
+  const athlete = await makeClient(pool, admin, "replyAthlete");
   const adminCookie = await signIn(admin);
 
   const post = await fetch(`${baseUrl}/api/admin/users/${athlete.id}/messages`, {
@@ -283,10 +263,10 @@ test("admin POST reply: happy path shows up in the athlete's own GET", async () 
 });
 
 test("inbox: last_message + unread correct; user with assignments but no messages appears with null last_message; ordering", async () => {
-  const admin = await makeUser("admin", "inboxAdmin");
-  const withMessages = await makeUser("user", "inboxWithMsgs");
-  const assignmentOnly = await makeUser("user", "inboxAssignOnly");
-  const untouched = await makeUser("user", "inboxUntouched"); // no messages, no assignments -> absent
+  const admin = await makeTrainer(pool, "inboxAdmin");
+  const withMessages = await makeClient(pool, admin, "inboxWithMsgs");
+  const assignmentOnly = await makeClient(pool, admin, "inboxAssignOnly");
+  const untouched = await makeClient(pool, admin, "inboxUntouched"); // no messages, no assignments -> absent
 
   await insertMessage(withMessages, "kyle", "First");
   await insertMessage(withMessages, "user", "Reply one");
@@ -319,4 +299,47 @@ test("inbox: last_message + unread correct; user with assignments but no message
   const withMsgIdx = rows.findIndex((r) => r.user.id === withMessages.id);
   const assignOnlyIdx = rows.findIndex((r) => r.user.id === assignmentOnly.id);
   assert.ok(withMsgIdx < assignOnlyIdx, "athlete with a real last message sorts before one with none");
+});
+
+async function msgTenancyFixture(label) {
+  const kyle = await makeTrainer(pool, `${label}Kyle`);
+  const kyleClient = await makeClient(pool, kyle, `${label}Client`);
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'user', 'hi coach')`, [kyleClient.id]);
+  const trainerB = await makeTrainer(pool, `${label}B`);
+  const clientB = await makeClient(pool, trainerB, `${label}BClient`);
+  await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'user', 'hi B')`, [clientB.id]);
+  return { kyleClient, clientB, cookieB: await signIn(trainerB) };
+}
+
+test("tenancy: B's inbox excludes Kyle's clients and includes B's own", async () => {
+  const f = await msgTenancyFixture("tenInbox");
+  const inbox = await fetch(`${baseUrl}/api/admin/inbox`, { headers: authHeaders(f.cookieB) });
+  assert.equal(inbox.status, 200);
+  const rows = await inbox.json();
+  assert.ok(!rows.some((r) => r.user.id === f.kyleClient.id));
+  assert.ok(rows.some((r) => r.user.id === f.clientB.id));
+});
+
+test("tenancy: B reading Kyle's client's thread is 404 and marks nothing read", async () => {
+  const f = await msgTenancyFixture("tenRead");
+  const get = await fetch(`${baseUrl}/api/admin/users/${f.kyleClient.id}/messages`, {
+    headers: authHeaders(f.cookieB),
+  });
+  assert.equal(get.status, 404);
+  const { rows } = await pool.query(`SELECT read_at FROM messages WHERE user_id = $1 AND sender = 'user'`, [
+    f.kyleClient.id,
+  ]);
+  assert.equal(rows[0].read_at, null);
+});
+
+test("tenancy: B posting to Kyle's client's thread is 404 and inserts nothing", async () => {
+  const f = await msgTenancyFixture("tenPost");
+  const post = await fetch(`${baseUrl}/api/admin/users/${f.kyleClient.id}/messages`, {
+    method: "POST",
+    headers: { ...authHeaders(f.cookieB), "content-type": "application/json" },
+    body: JSON.stringify({ body: "intruder" }),
+  });
+  assert.equal(post.status, 404);
+  const { rows } = await pool.query(`SELECT sender FROM messages WHERE user_id = $1`, [f.kyleClient.id]);
+  assert.equal(rows.length, 1);
 });

@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import pg from "pg";
+import { makeTrainer } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -47,13 +48,20 @@ after(async () => {
 
 const randomPassword = () => crypto.randomBytes(18).toString("base64url");
 
+// ONE TRAINER PER FILE: A CLIENT ROW MUST CARRY ITS TRAINER (USERS_TRAINER_BY_ROLE CHECK).
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 async function makeUser(role, label, { withPassword = true } = {}) {
   const email = `${label}.${process.hrtime.bigint()}@pw-test.local`;
   const password = randomPassword();
   const hash = withPassword ? await hashPassword(password) : null;
   const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, email`,
-    [email, label, role, hash]
+    `INSERT INTO users (email, name, role, password_hash, trainer_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, email`,
+    [email, label, role, hash, role === "user" ? trainer.id : null]
   );
   return { ...rows[0], password };
 }
@@ -152,6 +160,7 @@ test("11th login attempt for the same email is rate limited (429)", async () => 
 test("responses never contain password_hash or scrypt$", async () => {
   const user = await makeUser("user", "leakuser");
   const admin = await makeUser("admin", "leakadmin");
+  await pool.query(`UPDATE users SET trainer_id = $1 WHERE id = $2`, [admin.id, user.id]);
   const userCookie = await signIn(user);
   const adminCookie = await signIn(admin);
   const paths = [

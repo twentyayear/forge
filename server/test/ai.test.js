@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient, signIn as signInWith, authHeaders } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -34,6 +35,15 @@ const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 const { createApp } = await import("../app.js");
 const { testControls } = await import("../ai.js");
 
+const signIn = (user) => signInWith(pool, user);
+
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER, AND MOST TESTS DO NOT CARE WHICH.
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 const app = createApp(pool);
 const server = http.createServer(app);
 
@@ -49,36 +59,6 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
 });
-
-function uniqueEmail(label) {
-  return `${label}.${process.hrtime.bigint()}@ai-test.local`;
-}
-
-function sha256(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
-
-async function makeUser(role, label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id, email`,
-    [email, label, role]
-  );
-  return rows[0];
-}
-
-async function signIn(user) {
-  const raw = crypto.randomBytes(32).toString("base64url");
-  await pool.query(
-    `INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`,
-    [user.id, sha256(raw)]
-  );
-  return raw;
-}
-
-function authHeaders(cookie) {
-  return { cookie: `wh_session=${cookie}` };
-}
 
 function jsonHeaders(cookie) {
   return { ...authHeaders(cookie), "content-type": "application/json" };
@@ -117,7 +97,7 @@ async function postCheckin(cookie, day, score) {
 }
 
 test("checkin POST creates a pending draft citing a real number; a same-day repeat POST stays deduped to one", async () => {
-  const user = await makeUser("user", "checkinDraft");
+  const user = await makeClient(pool, trainer, "checkinDraft");
   const cookie = await signIn(user);
   const day = "2026-09-01";
 
@@ -145,7 +125,7 @@ test("checkin POST creates a pending draft citing a real number; a same-day repe
 });
 
 test("workout-log POST creates a pending draft with trigger_type workout_log", async () => {
-  const user = await makeUser("user", "workoutDraft");
+  const user = await makeClient(pool, trainer, "workoutDraft");
   const cookie = await signIn(user);
 
   const post = await fetch(`${baseUrl}/api/workout-logs`, {
@@ -165,9 +145,9 @@ test("workout-log POST creates a pending draft with trigger_type workout_log", a
 });
 
 test("admin approve sends the message and marks the draft sent+sent_message_id; approving again 404s", async () => {
-  const admin = await makeUser("admin", "approveAdmin");
+  const admin = await makeTrainer(pool, "approveAdmin");
   const adminCookie = await signIn(admin);
-  const user = await makeUser("user", "approveAthlete");
+  const user = await makeClient(pool, admin, "approveAthlete");
   const cookie = await signIn(user);
 
   const checkinRes = await postCheckin(cookie, "2026-09-02", 74);
@@ -203,9 +183,9 @@ test("admin approve sends the message and marks the draft sent+sent_message_id; 
 });
 
 test("editing a draft then approving carries the edited body; reject works and a rejected draft can't be approved", async () => {
-  const admin = await makeUser("admin", "editAdmin");
+  const admin = await makeTrainer(pool, "editAdmin");
   const adminCookie = await signIn(admin);
-  const user = await makeUser("user", "editAthlete");
+  const user = await makeClient(pool, admin, "editAthlete");
   const cookie = await signIn(user);
 
   const checkin1Res = await postCheckin(cookie, "2026-09-03", 55);
@@ -251,9 +231,9 @@ test("editing a draft then approving carries the edited body; reject works and a
 });
 
 test("kyleAutoSend true auto-sends: checkin POST yields a message directly, draft already status sent, no pending row", async () => {
-  const admin = await makeUser("admin", "autoSendAdmin");
+  const admin = await makeTrainer(pool, "autoSendAdmin");
   const adminCookie = await signIn(admin);
-  const user = await makeUser("user", "autoSendAthlete");
+  const user = await makeClient(pool, admin, "autoSendAthlete");
   const cookie = await signIn(user);
 
   const settingsRes = await fetch(`${baseUrl}/api/admin/users/${user.id}/settings`, {
@@ -287,7 +267,7 @@ test("kyleAutoSend true auto-sends: checkin POST yields a message directly, draf
 });
 
 test("a generation failure never affects the athlete's response and writes no draft row", async () => {
-  const user = await makeUser("user", "failureAthlete");
+  const user = await makeClient(pool, trainer, "failureAthlete");
   const cookie = await signIn(user);
 
   testControls.forceFailure = true;
@@ -308,9 +288,9 @@ test("a generation failure never affects the athlete's response and writes no dr
 });
 
 test("401/404 sweep on the new admin routes; settings PATCH rejects unknown keys; athlete /api/profile still can't set kyleAutoSend", async () => {
-  const normal = await makeUser("user", "sweepNormal");
+  const admin = await makeTrainer(pool, "sweepAdmin");
+  const normal = await makeClient(pool, admin, "sweepNormal");
   const normalCookie = await signIn(normal);
-  const admin = await makeUser("admin", "sweepAdmin");
   const adminCookie = await signIn(admin);
 
   const checkinRes = await postCheckin(normalCookie, "2026-09-07", 50);

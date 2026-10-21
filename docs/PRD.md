@@ -93,3 +93,5 @@ M4: **Resend blocker CLEARED** — the `mail.alphaecho.io` domain was actually v
 
 ## Next milestone: W — the overhaul (shaped 2026-10-21, not yet run)
 Kit: `docs/comps/overhaul/SPEC.md` (units W.0 to W.11, decisions, data contract, acceptance) and `EXECUTE.md` (authority, gate, measured premises, ship step). Board: https://claude.ai/artifact/QoZ5XigBbk4hs4s35Ms5T7. Night one = lean core (tenancy, programs and bundles, coach lines, achievements, compose + email + offers, foundation + PWA, client app, trainer console). Night two = Stripe subscriptions, push, wearables, food photos, native shell. U11 (Sam's cutover) and U12 (test-data cleanup) remain open and are unaffected.
+
+| W.1 | docs/asks/W1-trainer-tenancy.md | Trainer tenancy: `users.trainer_id`, scoped console, add client by email. GREEN 2026-10-21, deployed. |

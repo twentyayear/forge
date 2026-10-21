@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient, signIn as signInWith, authHeaders } from "./helpers.js";
 import { addSentenceBreaks, mapOffHit } from "../media-lib.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
@@ -33,6 +34,15 @@ const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 
 const { createApp } = await import("../app.js");
 
+const signIn = (user) => signInWith(pool, user);
+
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER, AND MOST TESTS DO NOT CARE WHICH.
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 const app = createApp(pool);
 const server = http.createServer(app);
 
@@ -49,36 +59,6 @@ after(async () => {
   await pool.end();
 });
 
-function uniqueEmail(label) {
-  return `${label}.${process.hrtime.bigint()}@media-test.local`;
-}
-
-function sha256(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
-
-async function makeUser(label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, 'user') RETURNING id, email`,
-    [email, label]
-  );
-  return rows[0];
-}
-
-async function signIn(user) {
-  const raw = crypto.randomBytes(32).toString("base64url");
-  await pool.query(
-    `INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`,
-    [user.id, sha256(raw)]
-  );
-  return raw;
-}
-
-function authHeaders(cookie) {
-  return { cookie: `wh_session=${cookie}` };
-}
-
 test("POST /api/tts and GET /api/food are 401 without a session", async () => {
   const ttsRes = await fetch(`${baseUrl}/api/tts`, {
     method: "POST",
@@ -92,7 +72,7 @@ test("POST /api/tts and GET /api/food are 401 without a session", async () => {
 });
 
 test("tts: 400 on empty text, 400 on any non-allowlisted voice_id, 503 when ELEVENLABS_API_KEY unset", async () => {
-  const user = await makeUser("ttsUser");
+  const user = await makeClient(pool, trainer, "ttsUser");
   const cookie = await signIn(user);
 
   // The route checks ELEVENLABS_API_KEY before text/voice validation (same
@@ -136,7 +116,7 @@ test("tts: 400 on empty text, 400 on any non-allowlisted voice_id, 503 when ELEV
 });
 
 test("food: 400 on q below 2 chars and q above 40 chars", async () => {
-  const user = await makeUser("foodUser");
+  const user = await makeClient(pool, trainer, "foodUser");
   const cookie = await signIn(user);
 
   const tooShort = await fetch(`${baseUrl}/api/food?q=a`, { headers: authHeaders(cookie) });

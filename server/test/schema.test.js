@@ -2,9 +2,10 @@
 // Runs ONLY against TEST_DATABASE_URL. Refuses to run against production.
 //
 // Run with: npm test  (after `npm run migrate:up:test`)
-import { test, after } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
+import { makeTrainer } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -30,10 +31,17 @@ function uniqueEmail(label) {
   return `${label}.${process.hrtime.bigint()}@schema-test.local`;
 }
 
+// ONE TRAINER PER FILE: A CLIENT ROW MUST CARRY ITS TRAINER (USERS_TRAINER_BY_ROLE CHECK).
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 async function makeUser(role = "user", label = "u") {
   const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id`,
-    [uniqueEmail(label), label, role]
+    `INSERT INTO users (email, name, role, trainer_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [uniqueEmail(label), label, role, role === "user" ? trainer.id : null]
   );
   return rows[0].id;
 }
@@ -160,4 +168,30 @@ test("cascade: deleting a user removes their sessions, logs, sets, and checkins"
   assert.equal(logs.rowCount, 0, "workout_logs cascaded");
   assert.equal(sets.rowCount, 0, "workout_log_sets cascaded");
   assert.equal(checkins.rowCount, 0, "checkins cascaded");
+});
+
+test("users_trainer_by_role: a client row without a trainer fails the CHECK", async () => {
+  await assert.rejects(
+    () => pool.query(`INSERT INTO users (email, name, role) VALUES ($1, 'x', 'user')`, [uniqueEmail("notrainer")]),
+    (err) => {
+      assert.equal(err.code, "23514", "expected a check_violation (23514)");
+      assert.equal(err.constraint, "users_trainer_by_role");
+      return true;
+    }
+  );
+});
+
+test("users_trainer_by_role: a trainer row with a trainer_id fails the CHECK", async () => {
+  await assert.rejects(
+    () =>
+      pool.query(`INSERT INTO users (email, name, role, trainer_id) VALUES ($1, 'x', 'admin', $2)`, [
+        uniqueEmail("adminwithtrainer"),
+        trainer.id,
+      ]),
+    (err) => {
+      assert.equal(err.code, "23514", "expected a check_violation (23514)");
+      assert.equal(err.constraint, "users_trainer_by_role");
+      return true;
+    }
+  );
 });

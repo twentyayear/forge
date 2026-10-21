@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient, signIn as signInWith, authHeaders } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -29,6 +30,15 @@ const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 
 const { createApp } = await import("../app.js");
 
+const signIn = (user) => signInWith(pool, user);
+
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER, AND MOST TESTS DO NOT CARE WHICH.
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
+
 const app = createApp(pool);
 const server = http.createServer(app);
 
@@ -45,37 +55,8 @@ after(async () => {
   await pool.end();
 });
 
-function uniqueEmail(label) {
-  return `${label}.${process.hrtime.bigint()}@data-test.local`;
-}
-
-function sha256(raw) {
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
-
-async function makeUser(role, label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id, email`,
-    [email, label, role]
-  );
-  return rows[0];
-}
-
 // Signs a user in directly (bypasses the magic-link flow -- already covered
 // by auth.test.js) by inserting a session row and returning its raw token.
-async function signIn(user) {
-  const raw = crypto.randomBytes(32).toString("base64url");
-  await pool.query(
-    `INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '1 day')`,
-    [user.id, sha256(raw)]
-  );
-  return raw;
-}
-
-function authHeaders(cookie) {
-  return { cookie: `wh_session=${cookie}` };
-}
 
 async function makeWorkoutAssignment(user) {
   const { rows: workoutRows } = await pool.query(
@@ -108,8 +89,8 @@ async function assignWorkoutToUser(user, workoutId, admin, scheduledFor) {
 }
 
 test("bootstrap: returns exactly the session user's data, shape matches spec, no cross-leak", async () => {
-  const userA = await makeUser("user", "bootA");
-  const userB = await makeUser("user", "bootB");
+  const userA = await makeClient(pool, trainer, "bootA");
+  const userB = await makeClient(pool, trainer, "bootB");
 
   await pool.query(
     `INSERT INTO checkins (user_id, day, score, answers) VALUES ($1, '2026-09-01', 80, $2)`,
@@ -171,9 +152,9 @@ test("bootstrap: returns exactly the session user's data, shape matches spec, no
 });
 
 test("bootstrap: assigned workout (scheduled today) appears in assignments with joined workout blocks; another user's assignment does NOT", async () => {
-  const admin = await makeUser("admin", "bootAssignAdmin");
-  const userA = await makeUser("user", "bootAssignA");
-  const userB = await makeUser("user", "bootAssignB");
+  const admin = await makeTrainer(pool, "bootAssignAdmin");
+  const userA = await makeClient(pool, admin, "bootAssignA");
+  const userB = await makeClient(pool, admin, "bootAssignB");
 
   const blocks = [{ exercise_key: "bench_press", sets: [{ reps: 8, weight_lbs: 135, rpe: 7.5 }] }];
   const workoutId = await makeAdminWorkout(admin, "Bootstrap workout", blocks);
@@ -197,8 +178,8 @@ test("bootstrap: assigned workout (scheduled today) appears in assignments with 
 
 // U6 (ask 32): bootstrap's unreadMessages count.
 test("bootstrap: unreadMessages counts only this user's unread kyle-sent rows", async () => {
-  const userA = await makeUser("user", "bootUnreadA");
-  const userB = await makeUser("user", "bootUnreadB");
+  const userA = await makeClient(pool, trainer, "bootUnreadA");
+  const userB = await makeClient(pool, trainer, "bootUnreadB");
 
   await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'kyle', 'Hey there')`, [userA.id]);
   await pool.query(`INSERT INTO messages (user_id, sender, body) VALUES ($1, 'kyle', 'How was training?')`, [
@@ -219,7 +200,7 @@ test("bootstrap: unreadMessages counts only this user's unread kyle-sent rows", 
 });
 
 test("checkin POST twice same day upserts: one row, second wins", async () => {
-  const user = await makeUser("user", "checkinUpsert");
+  const user = await makeClient(pool, trainer, "checkinUpsert");
   const cookie = await signIn(user);
 
   const first = await fetch(`${baseUrl}/api/checkins`, {
@@ -247,8 +228,8 @@ test("checkin POST twice same day upserts: one row, second wins", async () => {
 });
 
 test("fuel insert + delete own row; delete other user's row id -> 404, row survives", async () => {
-  const userA = await makeUser("user", "fuelA");
-  const userB = await makeUser("user", "fuelB");
+  const userA = await makeClient(pool, trainer, "fuelA");
+  const userB = await makeClient(pool, trainer, "fuelB");
   const cookieA = await signIn(userA);
   const cookieB = await signIn(userB);
 
@@ -294,7 +275,7 @@ test("fuel insert + delete own row; delete other user's row id -> 404, row survi
 });
 
 test("workout-log transaction: bad set (set_no 0) -> 400, log NOT inserted", async () => {
-  const user = await makeUser("user", "badSet");
+  const user = await makeClient(pool, trainer, "badSet");
   const cookie = await signIn(user);
 
   const { rows: before } = await pool.query(`SELECT count(*)::int AS n FROM workout_logs WHERE user_id = $1`, [
@@ -318,8 +299,8 @@ test("workout-log transaction: bad set (set_no 0) -> 400, log NOT inserted", asy
 });
 
 test("workout-log with another user's assignment_id -> 400 (composite FK), nothing inserted", async () => {
-  const userA = await makeUser("user", "assignA");
-  const userB = await makeUser("user", "assignB");
+  const userA = await makeClient(pool, trainer, "assignA");
+  const userB = await makeClient(pool, trainer, "assignB");
   const assignmentIdForA = await makeWorkoutAssignment(userA);
   const cookieB = await signIn(userB);
 
@@ -345,7 +326,7 @@ test("workout-log with another user's assignment_id -> 400 (composite FK), nothi
 });
 
 test("workout-log with a valid assignment_id marks that assignment completed", async () => {
-  const user = await makeUser("user", "assignComplete");
+  const user = await makeClient(pool, trainer, "assignComplete");
   const assignmentId = await makeWorkoutAssignment(user);
   const cookie = await signIn(user);
 
@@ -372,7 +353,7 @@ test("workout-log with a valid assignment_id marks that assignment completed", a
 });
 
 test("profile PATCH merges fields across two calls, rejects unknown keys", async () => {
-  const user = await makeUser("user", "profileMerge");
+  const user = await makeClient(pool, trainer, "profileMerge");
   const cookie = await signIn(user);
 
   const first = await fetch(`${baseUrl}/api/profile`, {
@@ -402,7 +383,7 @@ test("profile PATCH merges fields across two calls, rejects unknown keys", async
 });
 
 test("import happy path: realistic dump -> counts correct, rows correct, kcal mapped, profile merged", async () => {
-  const user = await makeUser("user", "importHappy");
+  const user = await makeClient(pool, trainer, "importHappy");
   const cookie = await signIn(user);
 
   const dump = {
@@ -462,7 +443,7 @@ test("import happy path: realistic dump -> counts correct, rows correct, kcal ma
 });
 
 test("import into an account with existing data -> 409, nothing changed", async () => {
-  const user = await makeUser("user", "importConflict");
+  const user = await makeClient(pool, trainer, "importConflict");
   await pool.query(`INSERT INTO checkins (user_id, day, score, answers) VALUES ($1, '2026-09-01', 50, '{}')`, [
     user.id,
   ]);

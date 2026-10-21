@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
 import pg from "pg";
+import { makeTrainer, makeClient } from "./helpers.js";
 
 const { TEST_DATABASE_URL, DATABASE_URL } = process.env;
 
@@ -56,14 +57,12 @@ function uniqueEmail(label) {
   return `${label}.${process.hrtime.bigint()}@auth-test.local`;
 }
 
-async function makeUser(role, label) {
-  const email = uniqueEmail(label);
-  const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role) VALUES ($1, $2, $3) RETURNING id, email`,
-    [email, label, role]
-  );
-  return rows[0];
-}
+// ONE TRAINER PER FILE: EVERY CLIENT ROW MUST HAVE A TRAINER (USERS_TRAINER_BY_ROLE CHECK).
+let trainer;
+
+before(async () => {
+  trainer = await makeTrainer(pool, "fileTrainer");
+});
 
 function sha256(raw) {
   return crypto.createHash("sha256").update(raw).digest("hex");
@@ -101,7 +100,7 @@ async function signIn(user) {
 }
 
 test("happy path: request-link -> capture outbox -> verify -> cookie -> /api/auth/me", async () => {
-  const user = await makeUser("user", "happy");
+  const user = await makeClient(pool, trainer, "happy");
 
   const reqRes = await requestLink(user.email);
   assert.equal(reqRes.status, 200);
@@ -127,7 +126,7 @@ test("happy path: request-link -> capture outbox -> verify -> cookie -> /api/aut
 });
 
 test("reused magic link: second verify redirects to ?auth=expired, no new session", async () => {
-  const user = await makeUser("user", "reuse");
+  const user = await makeClient(pool, trainer, "reuse");
   await requestLink(user.email);
   const token = extractToken(outbox[0].url);
 
@@ -150,7 +149,7 @@ test("reused magic link: second verify redirects to ?auth=expired, no new sessio
 });
 
 test("expired magic link token is rejected", async () => {
-  const user = await makeUser("user", "expired");
+  const user = await makeClient(pool, trainer, "expired");
   const raw = crypto.randomBytes(32).toString("base64url");
   await pool.query(
     `INSERT INTO magic_link_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() - interval '1 minute')`,
@@ -163,7 +162,7 @@ test("expired magic link token is rejected", async () => {
 });
 
 test("logout deletes the session row; subsequent /me is 401", async () => {
-  const user = await makeUser("user", "logout");
+  const user = await makeClient(pool, trainer, "logout");
   const cookie = await signIn(user);
   assert.ok(cookie, "signed in");
 
@@ -196,8 +195,8 @@ test("unknown email on request-link: generic 200, empty outbox, no token row", a
 });
 
 test("IDOR: GET /api/checkins as user A never returns user B's rows", async () => {
-  const userA = await makeUser("user", "idorA");
-  const userB = await makeUser("user", "idorB");
+  const userA = await makeClient(pool, trainer, "idorA");
+  const userB = await makeClient(pool, trainer, "idorB");
 
   await pool.query(
     `INSERT INTO checkins (user_id, day, score, answers) VALUES ($1, '2026-09-01', 81, '{"tag":"A"}')`,
@@ -220,8 +219,8 @@ test("IDOR: GET /api/checkins as user A never returns user B's rows", async () =
 });
 
 test("role gate: /api/admin/users is 404 for a normal user, 200 with the roster for admin", async () => {
-  const normal = await makeUser("user", "roleuser");
-  const admin = await makeUser("admin", "roleadmin");
+  const admin = await makeTrainer(pool, "roleadmin");
+  const normal = await makeClient(pool, admin, "roleuser");
 
   const normalCookie = await signIn(normal);
   const normalRes = await fetch(`${baseUrl}/api/admin/users`, {
@@ -237,7 +236,7 @@ test("role gate: /api/admin/users is 404 for a normal user, 200 with the roster 
   const rows = await adminRes.json();
   const ids = rows.map((r) => r.id);
   assert.ok(ids.includes(normal.id), "roster includes the normal user");
-  assert.ok(ids.includes(admin.id), "roster includes the admin user");
+  assert.ok(!ids.includes(admin.id), "roster lists only the trainer's clients, never the trainer");
 });
 
 test("rate limit: 6th request-link for the same email within the window is 429", async () => {

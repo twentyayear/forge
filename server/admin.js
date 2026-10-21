@@ -8,6 +8,8 @@ import { Router } from "express";
 import { makeRequireUser, requireAdmin } from "./authz.js";
 import { JOB_HANDLERS } from "./jobs.js";
 import { generateFromContext } from "./ai.js";
+import { issueMagicLink } from "./auth.js";
+import { rateLimit } from "express-rate-limit";
 
 // U8 (ask 34): the real deps for a manually-triggered job run -- same
 // generateFromContext the scheduler uses, so a manual run behaves identically
@@ -79,7 +81,7 @@ export function createAdminRouter(pool) {
 
   // GET /admin/users -- MOVED from routes.js (U2 reference route), extended
   // with last_checkin + assignment_count in the same single query (no N+1).
-  router.get("/admin/users", requireUser, requireAdmin, async (_req, res) => {
+  router.get("/admin/users", requireUser, requireAdmin, async (req, res) => {
     try {
       const { rows } = await pool.query(
         `SELECT u.id, u.email, u.name, u.role, u.created_at,
@@ -88,8 +90,10 @@ export function createAdminRouter(pool) {
          FROM users u
          LEFT JOIN checkins c ON c.user_id = u.id
          LEFT JOIN workout_assignments wa ON wa.user_id = u.id
+         WHERE u.role = 'user' AND u.trainer_id = $1
          GROUP BY u.id
-         ORDER BY u.created_at ASC`
+         ORDER BY u.created_at ASC`,
+        [req.user.id]
       );
       res.status(200).json(rows);
     } catch (err) {
@@ -106,7 +110,7 @@ export function createAdminRouter(pool) {
   router.get("/admin/users/:id/overview", requireUser, requireAdmin, async (req, res) => {
     const { id } = req.params;
     try {
-      const userResult = await pool.query(`SELECT id, email, name, role FROM users WHERE id = $1`, [id]);
+      const userResult = await pool.query(`SELECT id, email, name, role FROM users WHERE id = $1 AND trainer_id = $2`, [id, req.user.id]);
       const user = userResult.rows[0];
       if (!user) return res.status(404).json({ error: "not_found" });
 
@@ -225,10 +229,11 @@ export function createAdminRouter(pool) {
   });
 
   // GET /admin/workouts -- the console's "reuse a workout" list.
-  router.get("/admin/workouts", requireUser, requireAdmin, async (_req, res) => {
+  router.get("/admin/workouts", requireUser, requireAdmin, async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, title, notes, blocks, created_at FROM workouts ORDER BY created_at DESC`
+        `SELECT id, title, notes, blocks, created_at FROM workouts WHERE created_by = $1 ORDER BY created_at DESC`,
+        [req.user.id]
       );
       res.status(200).json(rows);
     } catch (err) {
@@ -252,8 +257,8 @@ export function createAdminRouter(pool) {
 
     try {
       const [userResult, workoutResult] = await Promise.all([
-        pool.query(`SELECT 1 FROM users WHERE id = $1`, [user_id]),
-        pool.query(`SELECT 1 FROM workouts WHERE id = $1`, [workout_id]),
+        pool.query(`SELECT 1 FROM users WHERE id = $1 AND trainer_id = $2`, [user_id, req.user.id]),
+        pool.query(`SELECT 1 FROM workouts WHERE id = $1 AND created_by = $2`, [workout_id, req.user.id]),
       ]);
       if (userResult.rows.length === 0) return res.status(404).json({ error: "user not found" });
       if (workoutResult.rows.length === 0) return res.status(404).json({ error: "workout not found" });
@@ -289,9 +294,9 @@ export function createAdminRouter(pool) {
 
     try {
       const { rows } = await pool.query(
-        `UPDATE workout_assignments SET status = $1 WHERE id = $2
+        `UPDATE workout_assignments SET status = $1 WHERE id = $2 AND assigned_by = $3
          RETURNING id, user_id, workout_id, scheduled_for, status, assigned_by, created_at`,
-        [status, req.params.id]
+        [status, req.params.id, req.user.id]
       );
       if (rows.length === 0) return res.status(404).json({ error: "not_found" });
       res.status(200).json(rows[0]);
@@ -308,7 +313,7 @@ export function createAdminRouter(pool) {
   // name/email, trigger type, created_at, and a one-line trigger context
   // summary (joins checkins/workout_logs by trigger_id, matched by trigger_type
   // so the join only ever hits one side).
-  router.get("/admin/drafts", requireUser, requireAdmin, async (_req, res) => {
+  router.get("/admin/drafts", requireUser, requireAdmin, async (req, res) => {
     try {
       const { rows } = await pool.query(
         `SELECT d.id, d.trigger_type, d.trigger_id, d.body, d.created_at,
@@ -322,8 +327,9 @@ export function createAdminRouter(pool) {
          LEFT JOIN workout_logs wl ON d.trigger_type = 'workout_log' AND wl.id = d.trigger_id
          LEFT JOIN workout_assignments wa ON wa.id = wl.assignment_id
          LEFT JOIN workouts w ON w.id = wa.workout_id
-         WHERE d.status = 'pending'
-         ORDER BY d.created_at ASC`
+         WHERE d.status = 'pending' AND u.trainer_id = $1
+         ORDER BY d.created_at ASC`,
+        [req.user.id]
       );
       const drafts = rows.map((r) => ({
         id: r.id,
@@ -350,8 +356,9 @@ export function createAdminRouter(pool) {
     try {
       const { rows } = await pool.query(
         `UPDATE ai_drafts SET body = $1 WHERE id = $2 AND status = 'pending'
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = ai_drafts.user_id AND u.trainer_id = $3)
          RETURNING id, trigger_type, trigger_id, body, status, created_at`,
-        [body, req.params.id]
+        [body, req.params.id, req.user.id]
       );
       if (rows.length === 0) return res.status(404).json({ error: "not_found" });
       res.status(200).json(rows[0]);
@@ -371,8 +378,11 @@ export function createAdminRouter(pool) {
     try {
       await client.query("BEGIN");
       const { rows: draftRows } = await client.query(
-        `SELECT id, user_id, body FROM ai_drafts WHERE id = $1 AND status = 'pending' FOR UPDATE`,
-        [req.params.id]
+        `SELECT id, user_id, body FROM ai_drafts
+         WHERE id = $1 AND status = 'pending'
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = ai_drafts.user_id AND u.trainer_id = $2)
+         FOR UPDATE`,
+        [req.params.id, req.user.id]
       );
       if (draftRows.length === 0) {
         await client.query("ROLLBACK");
@@ -406,8 +416,9 @@ export function createAdminRouter(pool) {
     try {
       const { rows } = await pool.query(
         `UPDATE ai_drafts SET status = 'rejected', decided_at = now() WHERE id = $1 AND status = 'pending'
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = ai_drafts.user_id AND u.trainer_id = $2)
          RETURNING id, trigger_type, trigger_id, status, decided_at`,
-        [req.params.id]
+        [req.params.id, req.user.id]
       );
       if (rows.length === 0) return res.status(404).json({ error: "not_found" });
       res.status(200).json(rows[0]);
@@ -429,8 +440,8 @@ export function createAdminRouter(pool) {
     }
     try {
       const { rows } = await pool.query(
-        `UPDATE users SET profile = profile || $1::jsonb WHERE id = $2 RETURNING profile`,
-        [{ kyleAutoSend: body.kyleAutoSend }, req.params.id]
+        `UPDATE users SET profile = profile || $1::jsonb WHERE id = $2 AND trainer_id = $3 RETURNING profile`,
+        [{ kyleAutoSend: body.kyleAutoSend }, req.params.id, req.user.id]
       );
       if (rows.length === 0) return res.status(404).json({ error: "not_found" });
       res.status(200).json(rows[0].profile);
@@ -439,6 +450,55 @@ export function createAdminRouter(pool) {
       console.error(`admin settings patch error: ${err.message}`);
       res.status(500).json({ error: "internal_error" });
     }
+  });
+
+  // ---- Add client (W.1) ----
+
+  // 30/HOUR PER TRAINER (NOT PER IP) SO ONE TRAINER CANNOT USE THE MAGIC-LINK MAILER AS A SPAM CANNON.
+  const addClientLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 30,
+    keyGenerator: (req) => req.user.id,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "too_many_requests" },
+  });
+
+  // POST /admin/clients {email, name} -- the trainer onboards a client by
+  // email; the client row carries the caller's id as trainer_id.
+  router.post("/admin/clients", requireUser, requireAdmin, addClientLimiter, async (req, res) => {
+    const rawEmail = req.body?.email;
+    const rawName = req.body?.name;
+    const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (!email.includes("@") || email.length > 254 || name.length < 1 || name.length > 80) {
+      return res.status(400).json({ error: "invalid_body" });
+    }
+
+    let created;
+    try {
+      const existing = await pool.query(`SELECT 1 FROM users WHERE email = $1`, [email]);
+      if (existing.rows.length > 0) return res.status(409).json({ error: "exists" });
+      const { rows } = await pool.query(
+        `INSERT INTO users (email, name, role, trainer_id) VALUES ($1, $2, 'user', $3)
+         RETURNING id, email, name`,
+        [email, name, req.user.id]
+      );
+      created = rows[0];
+    } catch (err) {
+      // A RACE ON THE UNIQUE EMAIL SURFACES AS 23505; IT IS THE SAME CONFLICT AS THE PRE-CHECK.
+      if (err.code === "23505") return res.status(409).json({ error: "exists" });
+      console.error(`admin add client error: ${err.message}`);
+      return res.status(500).json({ error: "internal_error" });
+    }
+
+    try {
+      await issueMagicLink(pool, created);
+    } catch (err) {
+      // THE ROW IS ALREADY COMMITTED; THE CLIENT CAN REQUEST ITS OWN LINK FROM THE SIGN-IN SCREEN.
+      console.error(`admin add client mail error: ${err.message}`);
+    }
+    res.status(201).json(created);
   });
 
   // ---- Automation jobs (U8, ask 34) ----

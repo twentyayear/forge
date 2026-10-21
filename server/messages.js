@@ -79,7 +79,7 @@ export function createMessagesRouter(pool) {
   // GET /admin/inbox -- one row per athlete who has any messages OR any
   // assignments, most-recently-active first. Two lateral joins (last message,
   // unread count) instead of N+1 per-athlete queries.
-  router.get("/admin/inbox", requireUser, requireAdmin, async (_req, res) => {
+  router.get("/admin/inbox", requireUser, requireAdmin, async (req, res) => {
     try {
       const { rows } = await pool.query(
         `SELECT u.id, u.email, u.name,
@@ -94,12 +94,13 @@ export function createMessagesRouter(pool) {
            SELECT COUNT(*)::int AS cnt FROM messages m
            WHERE m.user_id = u.id AND m.sender = 'user' AND m.read_at IS NULL
          ) uc ON true
-         WHERE u.role != 'admin'
+         WHERE u.role = 'user' AND u.trainer_id = $1
            AND (
              EXISTS (SELECT 1 FROM messages m2 WHERE m2.user_id = u.id)
              OR EXISTS (SELECT 1 FROM workout_assignments wa WHERE wa.user_id = u.id)
            )
-         ORDER BY lm.created_at DESC NULLS LAST`
+         ORDER BY lm.created_at DESC NULLS LAST`,
+        [req.user.id]
       );
       const inbox = rows.map((r) => ({
         user: { id: r.id, name: r.name, email: r.email },
@@ -120,7 +121,7 @@ export function createMessagesRouter(pool) {
   router.get("/admin/users/:id/messages", requireUser, requireAdmin, async (req, res) => {
     const { id } = req.params;
     try {
-      const userResult = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [id]);
+      const userResult = await pool.query(`SELECT 1 FROM users WHERE id = $1 AND trainer_id = $2`, [id, req.user.id]);
       if (userResult.rows.length === 0) return res.status(404).json({ error: "not_found" });
 
       const { rowCount: marked } = await pool.query(
@@ -147,7 +148,7 @@ export function createMessagesRouter(pool) {
     if (body === null) return res.status(400).json({ error: "invalid message" });
 
     try {
-      const userResult = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [id]);
+      const userResult = await pool.query(`SELECT 1 FROM users WHERE id = $1 AND trainer_id = $2`, [id, req.user.id]);
       if (userResult.rows.length === 0) return res.status(404).json({ error: "not_found" });
 
       const { rows } = await pool.query(
