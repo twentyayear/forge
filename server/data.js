@@ -11,7 +11,7 @@ import { sessionStreak, checkinStreak } from "./streaks.js";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FEELS = ["easy", "right", "hard"];
-const PROFILE_WHITELIST = ["bodyweight", "fuelTargets", "coach", "device", "emailMessages"];
+const PROFILE_WHITELIST = ["bodyweight", "fuelTargets", "coach", "device", "emailMessages", "voiceOn"];
 
 // THE CLIENT HISTORY WINDOW IN DAYS; A FUTURE PAID TIER RAISES THIS, SO IT IS ONE NAMED CONSTANT.
 export const HISTORY_DAYS_FREE = 30;
@@ -39,7 +39,7 @@ function whitelistedProfileFields(body) {
   const out = {};
   for (const key of Object.keys(body ?? {})) {
     if (!PROFILE_WHITELIST.includes(key)) return null; // unknown key -> caller rejects
-    if (key === "emailMessages" && typeof body[key] !== "boolean") return null;
+    if ((key === "emailMessages" || key === "voiceOn") && typeof body[key] !== "boolean") return null;
     out[key] = body[key];
   }
   return out;

@@ -10,6 +10,7 @@ export { Sheet } from "./Sheet.jsx";
 export { Toast } from "./Toast.jsx";
 export { SetGrid, isHit } from "./SetGrid.jsx";
 export { KyleLine, Avatar, Waveform } from "./KyleLine.jsx";
-export { Celebration } from "./Celebration.jsx";
+export { Celebration, Medal } from "./Celebration.jsx";
+export { InstallSheet } from "./InstallSheet.jsx";
 export { TabBar } from "./TabBar.jsx";
 export { Header } from "./Header.jsx";

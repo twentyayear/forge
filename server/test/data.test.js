@@ -382,6 +382,28 @@ test("profile PATCH merges fields across two calls, rejects unknown keys", async
   assert.equal(rejected.status, 400);
 });
 
+test("profile PATCH voiceOn persists and reads back in bootstrap; a non-boolean is 400", async () => {
+  const user = await makeClient(pool, trainer, "profileVoice");
+  const cookie = await signIn(user);
+
+  const ok = await fetch(`${baseUrl}/api/profile`, {
+    method: "PATCH",
+    headers: { ...authHeaders(cookie), "content-type": "application/json" },
+    body: JSON.stringify({ voiceOn: false }),
+  });
+  assert.equal(ok.status, 200);
+  const boot = await fetch(`${baseUrl}/api/bootstrap`, { headers: authHeaders(cookie) });
+  assert.equal(boot.status, 200);
+  assert.equal((await boot.json()).profile.voiceOn, false);
+
+  const bad = await fetch(`${baseUrl}/api/profile`, {
+    method: "PATCH",
+    headers: { ...authHeaders(cookie), "content-type": "application/json" },
+    body: JSON.stringify({ voiceOn: "no" }),
+  });
+  assert.equal(bad.status, 400);
+});
+
 test("import happy path: realistic dump -> counts correct, rows correct, kcal mapped, profile merged", async () => {
   const user = await makeClient(pool, trainer, "importHappy");
   const cookie = await signIn(user);

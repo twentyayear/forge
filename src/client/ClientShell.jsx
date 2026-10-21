@@ -1,13 +1,16 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Dumbbell, Flame, Home, MessageSquare, User } from "lucide-react";
 import { T } from "../theme.js";
 import { Button, Mark, TabBar, Toast } from "../ui/index.js";
-import Workhart from "../Workhart.jsx";
 import { useBootstrap } from "./useBootstrap.js";
 import { useSpeaker } from "./useSpeaker.js";
 import { Checkin } from "./Checkin.jsx";
 import { Today } from "./Today.jsx";
 import { Train } from "./Train.jsx";
+import { Coach } from "./Coach.jsx";
+import { Fuel } from "./Fuel.jsx";
+import { You } from "./You.jsx";
+import { call } from "./net.js";
 import { dayOf, todayStr } from "./engine.js";
 
 const ITEMS = [
@@ -27,14 +30,12 @@ const frame = { minHeight: "100dvh", background: T.color.bg, color: T.color.body
 
 export function ClientShell({ session, onSignedOut }) {
   const { data, loading, error, refetch: reload } = useBootstrap(session, onSignedOut);
-  // THE VOICE SWITCH LIVES IN THIS BROWSER: THE PROFILE WHITELIST ON THE SERVER HAS NO voiceOn FIELD TO STORE IT IN.
-  const [voiceLocal, setVoiceLocal] = useState(() => { try { return localStorage.getItem("workhart.voiceOn") !== "0"; } catch { return true; } });
-  const voiceOn = data?.profile?.voiceOn !== false && voiceLocal;
+  // THE PROFILE IS THE RECORD FOR THE VOICE SWITCH. THE OLD BROWSER-LOCAL KEY IS READ ONCE, AS A FALLBACK FOR A PROFILE THAT HAS NEVER SET IT, THEN REMOVED.
+  const [legacyVoice] = useState(() => { try { return localStorage.getItem("workhart.voiceOn"); } catch { return null; } });
+  const [voiceOverride, setVoiceOverride] = useState(null);
+  const profileVoice = data?.profile?.voiceOn;
+  const voiceOn = voiceOverride ?? (typeof profileVoice === "boolean" ? profileVoice : legacyVoice !== "0");
   const speaker = useSpeaker(voiceOn);
-  const changeVoice = useCallback((v) => {
-    setVoiceLocal(v);
-    try { localStorage.setItem("workhart.voiceOn", v ? "1" : "0"); } catch { /* storage unavailable */ }
-  }, []);
   const [tab, setTab] = useState("today");
   const [again, setAgain] = useState(false);
   const [skipped, setSkipped] = useState(() => wasSkipped(todayStr()));
@@ -42,6 +43,29 @@ export function ClientShell({ session, onSignedOut }) {
   const [toast, setToast] = useState("");
   const clearToast = useCallback(() => setToast(""), []);
 
+  const saveVoice = useCallback(async (v) => {
+    const res = await call("/api/profile", { method: "PATCH", body: JSON.stringify({ voiceOn: v }) }, onSignedOut);
+    return res.ok;
+  }, [onSignedOut]);
+  const changeVoice = useCallback(async (v) => {
+    setVoiceOverride(v);
+    if (!v) speaker.stop();
+    if (await saveVoice(v)) { reload(); }
+    else { setVoiceOverride(null); setToast("Couldn't save the voice setting. Try again."); }
+  }, [saveVoice, reload, speaker]);
+
+  // ONE-TIME MIGRATION OF THE OLD LOCAL SWITCH: A LOCAL "0" IS SAVED TO THE PROFILE, THEN THE KEY GOES AWAY.
+  const migrated = useRef(false);
+  useEffect(() => {
+    if (!data || migrated.current) return;
+    migrated.current = true;
+    if (legacyVoice === null) return;
+    (async () => {
+      if (typeof data.profile?.voiceOn === "boolean" || legacyVoice !== "0" || (await saveVoice(false))) {
+        try { localStorage.removeItem("workhart.voiceOn"); } catch { /* storage unavailable */ }
+      }
+    })();
+  }, [data, legacyVoice, saveVoice]);
   if (!data) {
     return (
       <div style={{ ...frame, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: T.space[4], padding: T.space[4] }}>
@@ -76,27 +100,25 @@ export function ClientShell({ session, onSignedOut }) {
   }
 
   const select = (id) => { if (id !== "train") setAgain(false); setTab(id); };
-  const legacy = tab === "coach" || tab === "fuel" || tab === "you";
 
   return (
     <div style={frame}>
-      {legacy ? (
-        <Workhart key={tab} session={session} onSignedOut={onSignedOut} forcedTab={tab} voiceOn={voiceOn} onVoiceChange={changeVoice} />
-      ) : (
-        <main style={{ maxWidth: 430, margin: "0 auto", padding: `${T.space[4]}px ${T.space[4]}px calc(${T.space[8] * 3}px + env(safe-area-inset-bottom))`, display: "flex", flexDirection: "column", gap: T.space[3] }}>
-          {tab === "today" && (
-            <Today data={data} session={session} speaker={speaker} onSignedOut={onSignedOut}
-              onSelect={select}
-              onCheckin={() => { setSkipped(false); setJustChecked(false); try { sessionStorage.removeItem(skipKey(day)); } catch { /* storage unavailable */ } }}
-              onTrainAgain={() => { setAgain(true); setTab("train"); }} />
-          )}
-          {tab === "train" && (
-            <Train key={again ? "again" : "once"} data={data} session={session} speaker={speaker} again={again} reload={reload} onSignedOut={onSignedOut}
-              onFinished={() => { setAgain(false); setTab("today"); }}
-              onLeave={(to) => { if (to === "again") setAgain(true); else { setAgain(false); setTab("today"); } }} />
-          )}
-        </main>
-      )}
+      <main style={{ maxWidth: 430, margin: "0 auto", padding: `${T.space[4]}px ${T.space[4]}px calc(${T.space[8] * 3}px + env(safe-area-inset-bottom))`, display: "flex", flexDirection: "column", gap: T.space[3] }}>
+        {tab === "today" && (
+          <Today data={data} session={session} speaker={speaker} onSignedOut={onSignedOut}
+            onSelect={select}
+            onCheckin={() => { setSkipped(false); setJustChecked(false); try { sessionStorage.removeItem(skipKey(day)); } catch { /* storage unavailable */ } }}
+            onTrainAgain={() => { setAgain(true); setTab("train"); }} />
+        )}
+        {tab === "train" && (
+          <Train key={again ? "again" : "once"} data={data} session={session} speaker={speaker} again={again} reload={reload} onSignedOut={onSignedOut}
+            onFinished={() => { setAgain(false); setTab("today"); }}
+            onLeave={(to) => { if (to === "again") setAgain(true); else { setAgain(false); setTab("today"); } }} />
+        )}
+        {tab === "coach" && <Coach data={data} speaker={speaker} reload={reload} onSignedOut={onSignedOut} />}
+        {tab === "fuel" && <Fuel data={data} speaker={speaker} reload={reload} onSignedOut={onSignedOut} />}
+        {tab === "you" && <You data={data} voiceOn={voiceOn} onVoiceChange={changeVoice} reload={reload} onSignedOut={onSignedOut} />}
+      </main>
       <TabBar items={ITEMS.map((i) => (i.id === "coach" ? { ...i, badge: data.unreadMessages } : i))} active={tab} onSelect={select} />
       <Toast message={toast} tone="good" onDone={clearToast} />
     </div>

@@ -258,9 +258,7 @@ function activeWorkoutFromAssignment(w) {
 
 // ---- App ----
 // SIGN-IN LIVES IN src/app/App.jsx; THIS COMPONENT STARTS FROM A SESSION AND HANDS 401s BACK THROUGH onSignedOut.
-// forcedTab ("coach" | "fuel" | "you") RENDERS ONLY THAT TAB FOR THE NEW CLIENT SHELL: NO SURVEY, NO LEGACY HEADER ROW, NO LEGACY TAB BAR.
-// voiceOn / onVoiceChange LET THE SHELL OWN THE VOICE SWITCH, BECAUSE THE SERVER PROFILE WHITELIST CANNOT STORE IT.
-export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voiceOnProp, onVoiceChange }) {
+export default function Workhart({ session, onSignedOut }) {
   const [screen, setScreen] = useState("boot");
   const [writeError, setWriteError] = useState("");
   const [serverCheckins, setServerCheckins] = useState({}); // { "<iso>": {score, answers} }
@@ -335,7 +333,7 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
   const recentAvg = recentAvgFor(readinessSeries);
   const baselineAvg = averageScore(serverCheckins) ?? readyToday;
   const histFor = (name) => realHistory(name, serverLogs);
-  const [tab, setTab] = useState(forcedTab ?? "today");
+  const [tab, setTab] = useState("today");
   const [selDay, setSelDay] = useState(iso(TODAY));
   const [active, setActive] = useState(null);        // { i, done }
   const [grid, setGrid] = useState({});              // { [exIndex]: [{reps, w, done}] }
@@ -352,8 +350,7 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
   const [libQ, setLibQ] = useState("");
   const [libEq, setLibEq] = useState("All");
   const [maxes, setMaxes] = useState({});       // name -> working max lb
-  const [voiceOn, setVoiceOnState] = useState(voiceOnProp ?? true);
-  const setVoiceOn = (v) => { setVoiceOnState(v); if (onVoiceChange) onVoiceChange(v); };
+  const [voiceOn, setVoiceOn] = useState(true);
   const [talking, setTalking] = useState(false);
   const [coach, setCoach] = useState(() => {
     const s = localStorage.getItem("workhart.coach");
@@ -429,7 +426,7 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
     const todayEntry = cmap[iso(TODAY)];
     setReadyToday(todayEntry ? todayEntry.score : null);
 
-    if (todayEntry || forcedTab) {
+    if (todayEntry) {
       setScreen("app");
     } else {
       setScreen("survey");
@@ -1654,7 +1651,6 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
       <style>{css}</style>
       <div style={{ width: "100%", maxWidth: 430, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
 
-        {!forcedTab && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 4px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
             <Mark height={30} />
@@ -1671,7 +1667,6 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
             </button>
           </div>
         </div>
-        )}
 
         {writeError && (
           <div style={{ color: C.energy, fontSize: 11.5, padding: "0 20px", marginTop: 4 }}>{writeError}</div>
@@ -2426,7 +2421,6 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
           )}
         </div>
 
-        {!forcedTab && (
         <nav aria-label="Main" style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "rgba(10,10,11,.92)", backdropFilter: "blur(14px)", borderTop: `1px solid ${C.line}`, display: "flex", padding: "8px 8px calc(8px + env(safe-area-inset-bottom))" }}>
           {[
             ["today", "Today", Home],
@@ -2452,7 +2446,6 @@ export default function Workhart({ session, onSignedOut, forcedTab, voiceOn: voi
             </button>
           ))}
         </nav>
-        )}
 
         {showReadiness && (
           <Sheet title="Readiness" onClose={() => setShowReadiness(false)}>

@@ -64,3 +64,11 @@
 - Read: `PATCH /workout-logs/:id` scoped by `user_id`, 404 on miss; the speaker is the only tts path; voice switch is browser-local (`workhart.voiceOn`) because the profile whitelist has no field (loose end).
 - Deviations accepted: `useBootstrap(session, onSignedOut)`; extra pure helpers; no remove-set; rest timer by end timestamp.
 - Live walk on alphaecho.io as the test client: recorded below.
+- Ship: main `acb16fa`; deploy OK. LIVE WALK on alphaecho.io as `hey+gl@` (minted link, Chrome at 430 px): check-in → score 100 stored; Today showed the real assignment "Test 2", Kyle's real last message, the week strip; Train matched the frame (bodyweight deadlift, 3 × 8); three sets checked → Kyle moment with a line citing "24 total reps"; Finish → `POST /api/workout-logs` 201, `POST /api/coach/line` 200, `POST /api/tts` 200; feel Hard → PATCH; Today then read Completed · Streak 1 · Last 3 of 3. psql: log row with `feel='hard'`, 3 set rows, assignment `completed`, two `coach_lines` rows. No console errors; no horizontal overflow (scrollWidth == clientWidth).
+- **FINDING (Sam):** both coach lines were `source=bank`: the API journal shows `claude api error: status=401 invalid x-api-key` on every call. The droplet's `ANTHROPIC_API_KEY` is invalid (rotated or revoked since 2026-09-04). Every AI feature (coach lines, Kyle drafts, compose) falls back until a new key is installed in `/etc/workhart/env` (clipboard → ssh, verified against `/v1/models` first, never echoed). Not a code defect; not fixable by the run.
+- Small defect seen: the install card clipped at the right at 430 px on first paint (the page itself did not overflow); queued for W.8.
+
+## W.8 client rest — GREEN (sonnet, first attempt)
+- Builder: build ok, 33/33 frontend, greps 0, detector `[]`, server 121/121. Fable re-run identical (detector also `[]` over `src/ui`).
+- Read: `voiceOn` boolean-only in the whitelist; the client tree no longer imports the legacy file.
+- Deviations accepted: food search normalised to the real `{results:[...]}` shape (the ask's `hits` was wrong); Toast repositioned (same clipping class as the install card); `Medal`/`InstallSheet` extracted; `DELETE /fuel-logs` is 200 not 204.
