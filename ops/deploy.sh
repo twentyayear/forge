@@ -22,7 +22,7 @@ echo "==> [4/5] remote: npm ci --omit=dev, migrate:up, restart workhart-api"
 ssh -o BatchMode=yes "$TARGET" 'set -e; cd /srv/workhart/server && npm ci --omit=dev && npm run migrate:up && sudo systemctl restart workhart-api'
 
 echo "==> [5/5] verify"
-sleep 1
+sleep 3
 RESPONSE="$(curl -fsS https://alphaecho.io/api/health)"
 echo "$RESPONSE"
 echo "$RESPONSE" | grep -q '"ok":true' || { echo "FATAL: health check did not report ok:true"; exit 1; }

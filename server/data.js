@@ -6,8 +6,11 @@ import express from "express";
 import { Router } from "express";
 import { makeRequireUser } from "./authz.js";
 import { createDraftGenerator } from "./ai.js";
+import { ACHIEVEMENTS, evaluateAndRecord, loadContext } from "./achievements.js";
+import { sessionStreak, checkinStreak } from "./streaks.js";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const FEELS = ["easy", "right", "hard"];
 const PROFILE_WHITELIST = ["bodyweight", "fuelTargets", "coach", "device"];
 
 function isPlainObject(v) {
@@ -48,7 +51,18 @@ export function createDataRouter(pool) {
 
   router.get("/bootstrap", requireUser, async (req, res) => {
     try {
-      const [profileResult, checkinsResult, fuelResult, logsResult, setsResult, assignmentsResult, unreadResult] =
+      const [
+        profileResult,
+        checkinsResult,
+        fuelResult,
+        logsResult,
+        setsResult,
+        assignmentsResult,
+        unreadResult,
+        allAssignmentsResult,
+        achievementsResult,
+        todayResult,
+      ] =
         await Promise.all([
           pool.query(`SELECT profile FROM users WHERE id = $1`, [req.user.id]),
           pool.query(`SELECT day, score, answers FROM checkins WHERE user_id = $1 ORDER BY day ASC`, [
@@ -60,7 +74,7 @@ export function createDataRouter(pool) {
             [req.user.id]
           ),
           pool.query(
-            `SELECT id, performed_at, notes, assignment_id
+            `SELECT id, performed_at, notes, assignment_id, feel
              FROM workout_logs WHERE user_id = $1 ORDER BY performed_at ASC`,
             [req.user.id]
           ),
@@ -89,6 +103,17 @@ export function createDataRouter(pool) {
             `SELECT COUNT(*)::int AS n FROM messages WHERE user_id = $1 AND sender = 'kyle' AND read_at IS NULL`,
             [req.user.id]
           ),
+          // W.4: THE STREAK NEEDS THE FULL ASSIGNMENT HISTORY, NOT THE 7-DAY WINDOW ABOVE.
+          pool.query(`SELECT scheduled_for::text AS scheduled_for, status FROM workout_assignments WHERE user_id = $1`, [
+            req.user.id,
+          ]),
+          pool.query(
+            `SELECT achievement_id, dedupe_key, earned_at, context FROM user_achievements
+             WHERE user_id = $1 ORDER BY earned_at ASC`,
+            [req.user.id]
+          ),
+          // TODAY COMES FROM THE DB CLOCK, THE SAME CLOCK THAT DECIDES scheduled_for <= CURRENT_DATE ELSEWHERE.
+          pool.query(`SELECT CURRENT_DATE::text AS today`),
         ]);
 
       const setsByLog = new Map();
@@ -109,6 +134,7 @@ export function createDataRouter(pool) {
         performed_at: l.performed_at,
         notes: l.notes,
         assignment_id: l.assignment_id,
+        feel: l.feel,
         sets: setsByLog.get(l.id) ?? [],
       }));
 
@@ -120,6 +146,28 @@ export function createDataRouter(pool) {
         program_title: a.program_title ?? null,
       }));
 
+      const registry = new Map(ACHIEVEMENTS.map((a) => [a.id, a]));
+      const achievements = achievementsResult.rows
+        .filter((r) => registry.has(r.achievement_id))
+        .map((r) => ({
+          id: r.achievement_id,
+          title: registry.get(r.achievement_id).title,
+          blurb: registry.get(r.achievement_id).blurb,
+          dedupe_key: r.dedupe_key,
+          earned_at: r.earned_at,
+          context: r.context,
+        }));
+      const today = todayResult.rows[0].today;
+      // PG PARSES A DATE COLUMN TO LOCAL-MIDNIGHT, SO LOCAL PARTS (NOT toISOString) GIVE THE STORED DAY BACK.
+      const pad = (n) => String(n).padStart(2, "0");
+      const checkinDays = checkinsResult.rows.map(
+        (c) => `${c.day.getFullYear()}-${pad(c.day.getMonth() + 1)}-${pad(c.day.getDate())}`
+      );
+      const streaks = {
+        session: sessionStreak(allAssignmentsResult.rows, today),
+        checkin: checkinStreak(checkinDays, today),
+      };
+
       res.status(200).json({
         user: req.user,
         profile: profileResult.rows[0]?.profile ?? {},
@@ -128,6 +176,8 @@ export function createDataRouter(pool) {
         workoutLogs,
         assignments,
         unreadMessages: unreadResult.rows[0].n,
+        achievements,
+        streaks,
       });
     } catch (err) {
       console.error(`bootstrap query error: ${err.message}`);
@@ -141,22 +191,32 @@ export function createDataRouter(pool) {
     if (!isValidScore(score)) return res.status(400).json({ error: "invalid score" });
     if (!isPlainObject(answers)) return res.status(400).json({ error: "invalid answers" });
 
+    const client = await pool.connect();
     try {
-      const { rows } = await pool.query(
+      await client.query("BEGIN");
+      const { rows } = await client.query(
         `INSERT INTO checkins (user_id, day, score, answers)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (user_id, day) DO UPDATE SET score = EXCLUDED.score, answers = EXCLUDED.answers, updated_at = now()
          RETURNING id, day, score, answers, created_at, updated_at`,
         [req.user.id, day, score, answers]
       );
-      res.status(200).json(rows[0]);
+      // TODAY COMES FROM THE DB CLOCK, NOT THE NODE CLOCK OR THE CLIENT, SO A SKEWED DEVICE CANNOT EARN A STREAK.
+      const { rows: todayRows } = await client.query(`SELECT CURRENT_DATE::text AS today`);
+      const ctx = await loadContext(client, req.user.id, { kind: "checkin", today: todayRows[0].today });
+      const earned = await evaluateAndRecord(client, req.user.id, ctx);
+      await client.query("COMMIT");
+      res.status(200).json({ ...rows[0], earned });
       // Fire-and-forget AI Kyle draft (ask 33) -- generateDraft catches and
       // logs every failure internally, so it can never affect this 2xx.
       setImmediate(() => generateDraft({ userId: req.user.id, triggerType: "checkin", triggerId: rows[0].id }));
     } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
       if (isDbInputError(err)) return res.status(400).json({ error: "invalid checkin data" });
       console.error(`checkin upsert error: ${err.message}`);
       res.status(500).json({ error: "internal_error" });
+    } finally {
+      client.release();
     }
   });
 
@@ -211,12 +271,15 @@ export function createDataRouter(pool) {
   });
 
   router.post("/workout-logs", requireUser, async (req, res) => {
-    const { performed_at, notes, assignment_id, sets } = req.body ?? {};
+    const { performed_at, notes, assignment_id, sets, feel } = req.body ?? {};
     if (typeof performed_at !== "string" || Number.isNaN(Date.parse(performed_at))) {
       return res.status(400).json({ error: "invalid performed_at" });
     }
     if (!Array.isArray(sets)) {
       return res.status(400).json({ error: "invalid sets" });
+    }
+    if (feel != null && !FEELS.includes(feel)) {
+      return res.status(400).json({ error: "invalid feel" });
     }
 
     const client = await pool.connect();
@@ -224,10 +287,10 @@ export function createDataRouter(pool) {
       await client.query("BEGIN");
 
       const { rows: logRows } = await client.query(
-        `INSERT INTO workout_logs (user_id, assignment_id, performed_at, notes)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, performed_at, notes, assignment_id`,
-        [req.user.id, assignment_id ?? null, performed_at, notes ?? null]
+        `INSERT INTO workout_logs (user_id, assignment_id, performed_at, notes, feel)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, performed_at, notes, assignment_id, feel`,
+        [req.user.id, assignment_id ?? null, performed_at, notes ?? null, feel ?? null]
       );
       const log = logRows[0];
 
@@ -252,8 +315,18 @@ export function createDataRouter(pool) {
         );
       }
 
+      // TODAY COMES FROM THE DB CLOCK, NOT THE NODE CLOCK OR THE CLIENT, SO A SKEWED DEVICE CANNOT EARN A STREAK.
+      const { rows: todayRows } = await client.query(`SELECT CURRENT_DATE::text AS today`);
+      const ctx = await loadContext(client, req.user.id, {
+        kind: "workout_log",
+        logId: log.id,
+        assignmentId: assignment_id ?? null,
+        today: todayRows[0].today,
+      });
+      const earned = await evaluateAndRecord(client, req.user.id, ctx);
+
       await client.query("COMMIT");
-      res.status(201).json({ ...log, sets: insertedSets });
+      res.status(201).json({ ...log, sets: insertedSets, earned });
       // Fire-and-forget AI Kyle draft (ask 33) -- see the checkins route above.
       setImmediate(() => generateDraft({ userId: req.user.id, triggerType: "workout_log", triggerId: log.id }));
     } catch (err) {

@@ -39,3 +39,9 @@
 - Builder: 98/98. Fable re-run: migrate down/up clean; `# tests 98 # pass 98 # fail 0`; `media.js`/`media-lib.js` diff 0 lines; build passes.
 - Security read: assignment ownership by `(id, user_id)` before any read of sets; previous sets and check-in read by `user_id` only; log line carries user id, kind, source, never the text; `ON CONFLICT ... DO UPDATE SET text = coach_lines.text` keeps the first writer's line.
 - Deviations accepted: prompt composed by slicing `SYSTEM_PROMPT`; empty `sets` allowed for `exercise`.
+- Ship: main `59d0cbc`; rsync + migrate `1790300000000_coach-lines` + restart all ran; the script's verify (`sleep 1` then curl) got a 502 because node listened one second after the restart, so the script exited before printing "deploy OK". Read-back 20 s later: health `db:true`, `NRestarts=0`, journal clean, `ANTHROPIC_API_KEY` present (count 1). Fix queued for the W.4 commit: verify waits 3 s.
+
+## W.4 achievements — GREEN (sonnet, first attempt)
+- Builder: 108/108. Fable re-run: migrate down/up clean; `# tests 108 # pass 108 # fail 0`; build passes.
+- Read: both writes evaluate inside BEGIN/COMMIT with `today` from `CURRENT_DATE`; `user_achievements` PK is the idempotency; every rule guarded per kind.
+- Deviations accepted: `new_pr` one per log (first PR exercise in set order); blurbs keep `<exercise>`/`<program>` placeholders (the client fills them from `context`); extra `context(ctx)` per registry entry.
