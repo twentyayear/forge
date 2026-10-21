@@ -37,7 +37,7 @@ const { Pool } = pg;
 const pool = new Pool({ connectionString: TEST_DATABASE_URL });
 
 const { createApp } = await import("../app.js");
-const { runDailyMonitor, runWeeklySummary, isoWeekInfo, isoWeekKey } = await import("../jobs.js");
+const { runDailyMonitor, runWeeklySummary, isoWeekInfo, isoWeekKey, expireStaleDrafts, DRAFT_MAX_AGE_DAYS } = await import("../jobs.js");
 
 const signIn = (user) => signInWith(pool, user);
 
@@ -361,4 +361,33 @@ test("admin jobs route: 401 no session, 404 non-admin, 404 unknown job name, 200
   for (const key of ["users", "acted", "skipped", "errors"]) {
     assert.equal(typeof weeklySummary[key], "number", `${key} should be a number: ${JSON.stringify(weeklySummary)}`);
   }
+});
+
+// ---- stale drafts expire after DRAFT_MAX_AGE_DAYS; fresh and decided rows are untouched ----
+
+test("daily monitor: a pending draft older than the max age is rejected; a fresh one and a sent one are untouched", async () => {
+  const user = await makeClient(pool, trainer, "staleDrafts");
+  const old = new Date(NOW.getTime() - (DRAFT_MAX_AGE_DAYS + 1) * 86400000);
+  const fresh = new Date(NOW.getTime() - 2 * 86400000);
+  const { rows } = await pool.query(
+    `INSERT INTO ai_drafts (user_id, trigger_type, body, status, created_at) VALUES
+       ($1, 'manual', 'old pending', 'pending', $2),
+       ($1, 'manual', 'fresh pending', 'pending', $3),
+       ($1, 'manual', 'old sent', 'sent', $2)
+     RETURNING id, body`,
+    [user.id, old, fresh]
+  );
+  const direct = await expireStaleDrafts(pool, { now: NOW });
+  assert.equal(direct.expired, 1, "exactly the old pending draft expires");
+  const { rows: after } = await pool.query(`SELECT body, status, decided_at FROM ai_drafts WHERE id = ANY($1::uuid[]) ORDER BY body`, [rows.map((r) => r.id)]);
+  const byBody = Object.fromEntries(after.map((r) => [r.body, r]));
+  assert.equal(byBody["old pending"].status, "rejected");
+  assert.ok(byBody["old pending"].decided_at, "decided_at is stamped");
+  assert.equal(byBody["fresh pending"].status, "pending");
+  assert.equal(byBody["old sent"].status, "sent");
+
+  const { deps } = makeFakeDeps();
+  const summary = await runDailyMonitor(pool, deps, { now: NOW });
+  assert.equal(summary.expiredDrafts, 0, "nothing left to expire on the next run");
+  assert.equal(summary.errors, 0);
 });

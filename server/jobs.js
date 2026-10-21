@@ -161,7 +161,31 @@ export async function runDailyMonitor(pool, deps, { now = new Date() } = {}) {
     }
   }
 
+  // STALE DRAFTS EXPIRE HERE, AFTER THE PER-USER LOOP, SO THE DRAFTS THIS RUN JUST WROTE ARE NEVER TOUCHED.
+  try {
+    summary.expiredDrafts = (await expireStaleDrafts(pool, { now })).expired;
+  } catch (err) {
+    console.error(`${DAILY_MONITOR}: draft expiry failed: ${err.message}`);
+    summary.errors++;
+  }
+
   return summary;
+}
+
+// ---- stale drafts ----
+
+// A PENDING DRAFT OLDER THAN THIS MANY DAYS IS NO LONGER A REPLY TO ANYTHING THE CLIENT REMEMBERS; IT IS REJECTED, NEVER SENT.
+export const DRAFT_MAX_AGE_DAYS = 7;
+
+// expireStaleDrafts(pool, {now}) -> {expired}. ONLY pending ROWS CHANGE; sent/rejected ROWS ARE NEVER TOUCHED.
+export async function expireStaleDrafts(pool, { now = new Date() } = {}) {
+  const cutoff = new Date(now.getTime() - DRAFT_MAX_AGE_DAYS * 86400000);
+  const { rowCount } = await pool.query(
+    `UPDATE ai_drafts SET status = 'rejected', decided_at = now()
+     WHERE status = 'pending' AND created_at < $1`,
+    [cutoff]
+  );
+  return { expired: rowCount };
 }
 
 // ---- weekly summary ----

@@ -2,9 +2,6 @@
 
 The one list of everything unbuilt, undecided or unverified. One heading per item, numbered once, never renumbered; a closed item is deleted. **Decision needed** marks a judgement call for Sam. **[server]** / **[browser]** tag items that cannot be verified from the repo alone.
 
-## 2. Pending AI drafts backlog [server]
-The trainer roster shows 29 pending `ai_drafts` accumulated by the daily and weekly jobs while nobody reviewed them. Approve or reject them from Inbox → Drafts, or delete the stale ones by SQL. **Decision needed:** whether old drafts should expire automatically (a job rule) or stay until reviewed.
-
 ## 3. Netlify prototype functions still in `main`
 `netlify/functions/` (tts and food proxies for the prototype) stay in the tree; the prototype branch keeps its own copy. Deleting them from `main` is a one-line change. **Decision needed:** delete now or keep until the prototype site is retired.
 
